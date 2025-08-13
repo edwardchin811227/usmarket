@@ -85,8 +85,8 @@ legend{padding:0 6px;color:#374151}
 
   <div class="canvas-box">
     <canvas id="c"></canvas>
-    <div id="tip" class="tooltip"></div>
   </div>
+  <div id="tip" class="tooltip"></div>
   <div class="legend" id="rangeLabel"></div>
 
   <fieldset>
@@ -180,7 +180,7 @@ c.addEventListener('mousemove', (ev)=>{
     if (d < dmin && d <= 8) { dmin = d; nearest = e; }
   }
   if (nearest){
-    showTip(mx, my, [
+    showTip(ev.clientX, ev.clientY, [
       `Date: ${nearest.date}`,
       `狀態: ${nearest.state}`,
       `Amber: ${nearest.amber ? 'true' : 'false'}`,

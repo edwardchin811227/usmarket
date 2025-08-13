@@ -161,11 +161,11 @@ function xAt(i, x0, x1, start, end){
 // === AMBER/RED: tooltip (Date/狀態/Amber/Red) ===
 function showTip(x, y, lines){
   tip.textContent = lines.join('\n');
-  tip.style.display = 'block';
+  tip.style.opacity = 1;
   tip.style.left = (x + 12) + 'px';
   tip.style.top  = (y + 12) + 'px';
 }
-function hideTip(){ tip.style.display = 'none'; }
+function hideTip(){ tip.style.opacity = 0; }
 
 c.addEventListener('mousemove', (ev)=>{
   const rect = c.getBoundingClientRect();
@@ -182,9 +182,9 @@ c.addEventListener('mousemove', (ev)=>{
   if (nearest){
     showTip(mx, my, [
       `Date: ${nearest.date}`,
-      `狀態:  ${nearest.state}`,
+      `狀態: ${nearest.state}`,
       `Amber: ${nearest.amber ? 'true' : 'false'}`,
-      `Red:   ${nearest.red ? 'true' : 'false'}`
+      `Red: ${nearest.red ? 'true' : 'false'}`
     ]);
   }else{
     hideTip();

@@ -294,7 +294,7 @@ function draw(){
     const red   = (s0!=='Red' && s1==='Red');
     if (amber || red) {
       const x = xAt(i, padL, W-padR, start, end);
-      const y = padT + 10; // 貼主圖頂部（避免擋到折線），你可微調 6~14
+      const y = red ? (H - padB - 10) : (padT + 10); // Red 底部，Amber 頂部
       EVENTS.push({i, x, y, amber, red, date: comp[i].date, state: s1});
     }
   }

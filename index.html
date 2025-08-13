@@ -144,6 +144,7 @@ const wtTbl=$('#wtTbl tbody'), btnSaveW=$('#btnSaveW'), wtMsg=$('#wtMsg');
 // === AMBER/RED: globals & helpers ===
 let EVENTS=[];           // 當前視窗內的事件點（供繪圖與 hover）
 let STATES=[];           // 每日狀態快取（Green / Range / Red）
+let COMP=[], PAD={L:0,R:0,W:0}; // 當前計算結果及畫布邊界資訊
 
 function stateOf(score, g, r){
   if (!isFinite(score)) return 'Range';
@@ -172,23 +173,23 @@ c.addEventListener('mousemove', (ev)=>{
   const mx = ev.clientX - rect.left;
   const my = ev.clientY - rect.top;
 
-  // 找最近的事件點（半徑 8px）
-  let nearest=null, dmin=9e9;
-  for (const e of EVENTS){
-    const dx = mx - e.x, dy = my - e.y;
-    const d = Math.hypot(dx, dy);
-    if (d < dmin && d <= 8) { dmin = d; nearest = e; }
-  }
-  if (nearest){
-    showTip(ev.clientX, ev.clientY, [
-      `Date: ${nearest.date}`,
-      `狀態: ${nearest.state}`,
-      `Amber: ${nearest.amber ? 'true' : 'false'}`,
-      `Red: ${nearest.red ? 'true' : 'false'}`
-    ]);
-  }else{
-    hideTip();
-  }
+  if (!COMP.length) { hideTip(); return; }
+  if (mx < PAD.L || mx > PAD.W - PAD.R) { hideTip(); return; }
+
+  const usableW = PAD.W - PAD.L - PAD.R;
+  const n = Math.max(1, end - start - 1);
+  let idx = Math.round(start + (mx - PAD.L) * n / usableW);
+  idx = Math.max(start, Math.min(end - 1, idx));
+  const data = COMP[idx];
+  if (!data) { hideTip(); return; }
+  let amber=false, red=false;
+  for (const e of EVENTS){ if (e.i === idx){ amber=e.amber; red=e.red; break; } }
+  showTip(ev.clientX, ev.clientY, [
+    `Date: ${data.date}`,
+    `狀態: ${data.state}`,
+    `Amber: ${amber ? 'true' : 'false'}`,
+    `Red: ${red ? 'true' : 'false'}`
+  ]);
 });
 c.addEventListener('mouseleave', hideTip);
 
@@ -260,6 +261,7 @@ function setWindowByPreset(days,n){
 function draw(){
   const thrG=parseFloat(thrGEl.value||0.5), thrR=parseFloat(thrREl.value||-0.5);
   const comp=compute(rows,thrG,thrR);
+  COMP=comp;
   const W=c.clientWidth,H=c.clientHeight; ctx.clearRect(0,0,W,H);
   if(comp.length===0) return;
   if(end===0){ const span=Math.min(DEFAULT_VIEW_DAYS, Math.max(1,comp.length-1)); end=comp.length; start=Math.max(0,end-span);}
@@ -267,6 +269,7 @@ function draw(){
   const view=comp.slice(start,end);
   const latest=comp[comp.length-1].state; stateBadge.textContent='狀態：'+latest; stateBadge.className='badge status '+(latest==='Green'?'':(latest==='Red'?'red':'range'));
   const padL=52,padR=22,padT=20,padB=48;
+  PAD={L:padL,R:padR,W:W};
   const x=i=> padL + ((W-padL-padR)*(i/(view.length-1||1)));
   const y=v=>{ const mn=-4.2,mx=4.2; return padT + (1-(v-mn)/(mx-mn))*(H-padT-padB); };
   if($('#showBG').checked && view.length>0){ let s=0,cur=view[0].state; for(let i=1;i<view.length;i++){ if(view[i].state!==cur){ shade(s,i-1,cur); s=i; cur=view[i].state; } } shade(s,view.length-1,cur);

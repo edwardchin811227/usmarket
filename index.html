@@ -141,6 +141,57 @@ const stateBadge=$('#stateBadge'), rangeLabel=$('#rangeLabel');
 const csvUrlEl=$('#csvUrl'), btnSaveSrc=$('#btnSaveSrc'), btnRefresh=$('#btnRefresh'), srcMsg=$('#srcMsg');
 const wtTbl=$('#wtTbl tbody'), btnSaveW=$('#btnSaveW'), wtMsg=$('#wtMsg');
 
+// === AMBER/RED: globals & helpers ===
+let EVENTS=[];           // 當前視窗內的事件點（供繪圖與 hover）
+let STATES=[];           // 每日狀態快取（Green / Range / Red）
+
+function stateOf(score, g, r){
+  if (!isFinite(score)) return 'Range';
+  if (score >= g) return 'Green';
+  if (score <= r) return 'Red';
+  return 'Range';
+}
+
+// 簡單的座標映射（需與你的 draw() 使用的一致）
+function xAt(i, x0, x1, start, end){
+  const n = Math.max(1, end - start - 1);
+  return x0 + (i - start) * (x1 - x0) / n;
+}
+
+// === AMBER/RED: tooltip (Date/狀態/Amber/Red) ===
+function showTip(x, y, lines){
+  tip.textContent = lines.join('\n');
+  tip.style.display = 'block';
+  tip.style.left = (x + 12) + 'px';
+  tip.style.top  = (y + 12) + 'px';
+}
+function hideTip(){ tip.style.display = 'none'; }
+
+c.addEventListener('mousemove', (ev)=>{
+  const rect = c.getBoundingClientRect();
+  const mx = ev.clientX - rect.left;
+  const my = ev.clientY - rect.top;
+
+  // 找最近的事件點（半徑 8px）
+  let nearest=null, dmin=9e9;
+  for (const e of EVENTS){
+    const dx = mx - e.x, dy = my - e.y;
+    const d = Math.hypot(dx, dy);
+    if (d < dmin && d <= 8) { dmin = d; nearest = e; }
+  }
+  if (nearest){
+    showTip(mx, my, [
+      `Date: ${nearest.date}`,
+      `狀態:  ${nearest.state}`,
+      `Amber: ${nearest.amber ? 'true' : 'false'}`,
+      `Red:   ${nearest.red ? 'true' : 'false'}`
+    ]);
+  }else{
+    hideTip();
+  }
+});
+c.addEventListener('mouseleave', hideTip);
+
 function SMA(a,n,i){ if(i+1<n) return NaN; let s=0; for(let k=i-n+1;k<=i;k++) s+=a[k]; return s/n; }
 function pct(a,p,i){ if(i<p) return NaN; const x=a[i-p], y=a[i]; if(x==null||x==0) return NaN; return (y-x)/x; }
 
@@ -229,14 +280,33 @@ function draw(){
   ctx.fillStyle='#64748b'; ctx.font='12px system-ui'; ctx.textAlign='center';
   ctx.fillText(view[0]?.date||'', padL, H-20); ctx.fillText(view[Math.floor((view.length-1)/2)]?.date||'', (W)/2, H-20); ctx.fillText(view[view.length-1]?.date||'', W-padR, H-20);
   rangeLabel.textContent=`${view[0]?.date||''} ~ ${view[view.length-1]?.date||''}（${view.length} 天）`;
+  // === AMBER/RED: build STATES & EVENTS, then draw dots ===
+  const g = +thrGEl.value, r = +thrREl.value;
+  STATES = new Array(comp.length).fill('Range');
+  for (let i = 0; i < comp.length; i++) {
+    STATES[i] = stateOf(comp[i].fused, g, r);
+  }
 
-  c.onmousemove=(ev)=>{ const r=c.getBoundingClientRect(); const mx=ev.clientX-r.left; const frac=Math.min(1,Math.max(0,(mx-padL)/(W-padL-padR))); const idx=Math.round(frac*(view.length-1));
-    const d=view[idx]; if(!d) return; tip.style.opacity=1;
-    tip.innerHTML=`Date: ${d.date}<br>Fused: ${d.disp.toFixed(2)}<br>狀態：${d.state}<br>` + FACTORS.map(f=> f+': '+(d.vals[f]*4).toFixed(2)).join('<br>');
-    const tw=tip.offsetWidth,th=tip.offsetHeight; const lx=Math.max(r.left+8, Math.min(ev.clientX+12, r.right-tw-8)); const ty=Math.max(r.top+8, Math.min(ev.clientY-th-12, r.bottom-th-8));
-    tip.style.left=lx+'px'; tip.style.top=ty+'px';
-  };
-  c.onmouseleave=()=> tip.style.opacity=0;
+  EVENTS = [];
+  for (let i = Math.max(start+1, 1); i < end; i++) {
+    const s0 = STATES[i-1], s1 = STATES[i];
+    const amber = ((s0==='Green' && s1==='Range') || (s0==='Range' && s1==='Green'));
+    const red   = (s0!=='Red' && s1==='Red');
+    if (amber || red) {
+      const x = xAt(i, padL, W-padR, start, end);
+      const y = padT + 10; // 貼主圖頂部（避免擋到折線），你可微調 6~14
+      EVENTS.push({i, x, y, amber, red, date: comp[i].date, state: s1});
+    }
+  }
+
+  // 繪製事件點（Amber 橙、Red 紅）
+  for (const e of EVENTS) {
+    ctx.beginPath();
+    ctx.fillStyle = e.red ? '#ef4444' : '#f59e0b'; // red-500 / amber-500
+    ctx.arc(e.x, e.y, e.red ? 5 : 4, 0, Math.PI*2);
+    ctx.fill();
+  }
+
   saveState();
 }
 

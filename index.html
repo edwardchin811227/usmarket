@@ -143,7 +143,9 @@ const wtTbl=$('#wtTbl tbody'), btnSaveW=$('#btnSaveW'), wtMsg=$('#wtMsg');
 
 // === AMBER/RED: globals & helpers ===
 let EVENTS=[];           // 當前視窗內的事件點（供繪圖與 hover）
+let EVENT_MAP={};       // 以索引快速查詢事件
 let STATES=[];           // 每日狀態快取（Green / Range / Red）
+let COMP=[], PAD={L:0,R:0,W:0, UW:0, N:1}; // 當前計算結果及畫布邊界資訊
 
 function stateOf(score, g, r){
   if (!isFinite(score)) return 'Range';
@@ -153,8 +155,8 @@ function stateOf(score, g, r){
 }
 
 // 簡單的座標映射（需與你的 draw() 使用的一致）
-function xAt(i, x0, x1, start, end){
-  const n = Math.max(1, end - start - 1);
+function xAt(i, x0, x1, start, end, n){
+  n = n ?? Math.max(1, end - start - 1);
   return x0 + (i - start) * (x1 - x0) / n;
 }
 
@@ -170,25 +172,23 @@ function hideTip(){ tip.style.opacity = 0; }
 c.addEventListener('mousemove', (ev)=>{
   const rect = c.getBoundingClientRect();
   const mx = ev.clientX - rect.left;
-  const my = ev.clientY - rect.top;
 
-  // 找最近的事件點（半徑 8px）
-  let nearest=null, dmin=9e9;
-  for (const e of EVENTS){
-    const dx = mx - e.x, dy = my - e.y;
-    const d = Math.hypot(dx, dy);
-    if (d < dmin && d <= 8) { dmin = d; nearest = e; }
-  }
-  if (nearest){
-    showTip(ev.clientX, ev.clientY, [
-      `Date: ${nearest.date}`,
-      `狀態: ${nearest.state}`,
-      `Amber: ${nearest.amber ? 'true' : 'false'}`,
-      `Red: ${nearest.red ? 'true' : 'false'}`
-    ]);
-  }else{
-    hideTip();
-  }
+  if (!COMP.length) { hideTip(); return; }
+  if (mx < PAD.L || mx > PAD.W - PAD.R) { hideTip(); return; }
+
+  let idx = Math.round(start + (mx - PAD.L) * PAD.N / PAD.UW);
+  idx = Math.max(start, Math.min(end - 1, idx));
+  const data = COMP[idx];
+  if (!data) { hideTip(); return; }
+  const evt = EVENT_MAP[idx];
+  const amber = !!evt?.amber;
+  const red = !!evt?.red;
+  showTip(ev.clientX, ev.clientY, [
+    `Date: ${data.date}`,
+    `狀態: ${data.state}`,
+    `Amber: ${amber ? 'true' : 'false'}`,
+    `Red: ${red ? 'true' : 'false'}`
+  ]);
 });
 c.addEventListener('mouseleave', hideTip);
 
@@ -260,14 +260,16 @@ function setWindowByPreset(days,n){
 function draw(){
   const thrG=parseFloat(thrGEl.value||0.5), thrR=parseFloat(thrREl.value||-0.5);
   const comp=compute(rows,thrG,thrR);
+  COMP=comp;
   const W=c.clientWidth,H=c.clientHeight; ctx.clearRect(0,0,W,H);
   if(comp.length===0) return;
   if(end===0){ const span=Math.min(DEFAULT_VIEW_DAYS, Math.max(1,comp.length-1)); end=comp.length; start=Math.max(0,end-span);}
   applyBounds(comp.length);
   const view=comp.slice(start,end);
   const latest=comp[comp.length-1].state; stateBadge.textContent='狀態：'+latest; stateBadge.className='badge status '+(latest==='Green'?'':(latest==='Red'?'red':'range'));
-  const padL=52,padR=22,padT=20,padB=48;
-  const x=i=> padL + ((W-padL-padR)*(i/(view.length-1||1)));
+    const padL=52,padR=22,padT=20,padB=48;
+    PAD={L:padL,R:padR,W:W, UW:W-padL-padR, N:Math.max(1,end-start-1)};
+    const x=i=> padL + (PAD.UW*(i/(view.length-1||1)));
   const y=v=>{ const mn=-4.2,mx=4.2; return padT + (1-(v-mn)/(mx-mn))*(H-padT-padB); };
   if($('#showBG').checked && view.length>0){ let s=0,cur=view[0].state; for(let i=1;i<view.length;i++){ if(view[i].state!==cur){ shade(s,i-1,cur); s=i; cur=view[i].state; } } shade(s,view.length-1,cur);
     function shade(a,b,st){ const color=st==='Green'?COLORS.bgG:(st==='Red'?COLORS.bgR:COLORS.bgN); const x0=x(a),x1=x(b); ctx.fillStyle=color; ctx.fillRect(x0,padT,Math.max(1,x1-x0),H-padT-padB); } }
@@ -287,17 +289,20 @@ function draw(){
     STATES[i] = stateOf(comp[i].fused, g, r);
   }
 
-  EVENTS = [];
-  for (let i = Math.max(start+1, 1); i < end; i++) {
+    EVENTS = [];
+    EVENT_MAP = {};
+    for (let i = Math.max(start+1, 1); i < end; i++) {
     const s0 = STATES[i-1], s1 = STATES[i];
     const amber = ((s0==='Green' && s1==='Range') || (s0==='Range' && s1==='Green'));
     const red   = (s0!=='Red' && s1==='Red');
     if (amber || red) {
-      const x = xAt(i, padL, W-padR, start, end);
+      const x = xAt(i, padL, W-padR, start, end, PAD.N);
       const y = red ? (H - padB - 10) : (padT + 10); // Red 底部，Amber 頂部
-      EVENTS.push({i, x, y, amber, red, date: comp[i].date, state: s1});
+        const evt = {i, x, y, amber, red, date: comp[i].date, state: s1};
+        EVENTS.push(evt);
+        EVENT_MAP[i] = evt;
+      }
     }
-  }
 
   // 繪製事件點（Amber 橙、Red 紅）
   for (const e of EVENTS) {

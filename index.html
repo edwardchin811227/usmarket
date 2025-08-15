@@ -103,6 +103,7 @@ legend{padding:0 6px;color:#374151}
       <span class="note" id="wtMsg"></span>
     </div>
   </fieldset>
+  <div id="demoChart" style="height:400px;margin:12px"></div>
 </div>
 
 <script>
@@ -459,6 +460,48 @@ function init(){
   bindWeightAutoNormalize();
 }
 init();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+  const demoChart = echarts.init(document.getElementById('demoChart'));
+  const demoOption = {
+    xAxis: {
+      type: 'category',
+      data: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    },
+    yAxis: { type: 'value' },
+    series: [
+      { data: [150, 230, 224, 218, 135, 147, 260], type: 'line' }
+    ],
+    dataZoom: [
+      // 手勢/滑輪內縮放（不顯示 UI）
+      { type: 'inside', xAxisIndex: 0, filterMode: 'none' },
+      // 底部可拖拉的時間條
+      {
+        type: 'slider',
+        xAxisIndex: 0,
+        bottom: 8,
+        height: 36,
+        brushSelect: true,
+        throttle: 30,
+        // 把時間條做得更「乾淨」
+        backgroundColor: 'rgba(0,0,0,0.04)',
+        dataBackground: {
+          lineStyle: { opacity: 0.35 },
+          areaStyle: { opacity: 0.15 }
+        },
+        fillerColor: 'rgba(24,144,255,0.20)', // 選中區域填充
+        borderColor: '#c2d4ff',
+        // 左右把手樣式
+        handleSize: '120%',
+        handleIcon: 'M8.2,13.4v-12c0-0.6,0.4-1,1-1h1.6c0.6,0,1,0.4,1,1v12c0,0.6-0.4,1-1,1H9.2C8.6,14.4,8.2,14,8.2,13.4z',
+        handleStyle: { color: '#fff', borderColor: '#8bb1ff', shadowColor: 'rgba(0,0,0,0.15)', shadowBlur: 2 },
+        // 刻度與文字
+        textStyle: { color: '#8c8c8c' }
+      }
+    ]
+  };
+  demoChart.setOption(demoOption);
 </script>
 </body>
 </html>

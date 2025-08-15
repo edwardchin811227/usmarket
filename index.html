@@ -19,16 +19,14 @@
 canvas{width:100%;height:100%;display:block;background:#fff}
 .tooltip{position:fixed;pointer-events:none;background:#111827;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;opacity:0;transition:opacity .12s;max-width:260px;box-shadow:0 8px 20px rgba(0,0,0,.15)}
 .legend{font-size:12px;color:#374151;display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:0 12px 8px}
-.sliders{display:flex;gap:12px;align-items:center;justify-content:center;margin:0}
-.slider{display:flex;align-items:center;gap:8px}
-.slider label{width:46px;text-align:right;color:#374151}
-.slider input[type=range]{flex:1;height:28px;-webkit-appearance:none;background:transparent}
-.slider input[type=range]::-webkit-slider-runnable-track{height:10px;background:#e5e7eb;border-radius:999px}
-.slider input[type=range]::-moz-range-track{height:10px;background:#e5e7eb;border-radius:999px}
-.slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;margin-top:-6px;background:#111827;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.25)}
-.slider.start input[type=range]::-webkit-slider-thumb{background:#059669}
-.slider.mid   input[type=range]::-webkit-slider-thumb{background:#2563eb}
-.slider.end   input[type=range]::-webkit-slider-thumb{background:#ef4444}
+.range-slider{position:relative;margin:8px 12px;height:28px}
+.range-slider input[type=range]{position:absolute;left:0;top:0;width:100%;height:28px;-webkit-appearance:none;background:transparent;pointer-events:none}
+.range-slider input[type=range]::-webkit-slider-runnable-track{height:10px;background:#e5e7eb;border-radius:999px}
+.range-slider input[type=range]::-moz-range-track{height:10px;background:#e5e7eb;border-radius:999px}
+.range-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;margin-top:-6px;background:#111827;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.25);pointer-events:auto}
+.range-slider input[type=range]#sStart::-webkit-slider-thumb{background:#059669}
+.range-slider input[type=range]#sEnd::-webkit-slider-thumb{background:#ef4444}
+.range-slider input[type=range]#sEnd{direction:rtl}
 fieldset{border:1px dashed var(--border);padding:6px 10px;border-radius:10px;margin:8px 12px}
 legend{padding:0 6px;color:#374151}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}
@@ -45,9 +43,6 @@ legend{padding:0 6px;color:#374151}
 .presets .seg .segbtn{padding:6px 12px;background:#fff;border:0;border-right:1px solid var(--border);cursor:pointer}
 .presets .seg .segbtn:last-child{border-right:0}
 .presets .seg .segbtn.active{background:#111827;color:#fff}
-/* sliders inside top toolbar */
-.toolbar .sliders{margin:0;flex:1;max-width:640px}
-.toolbar .sliders .slider label{width:42px}
 </style>
 </head>
 <body>
@@ -61,11 +56,6 @@ legend{padding:0 6px;color:#374151}
       <button data-win="30" class="active">1M</button>
       <button data-win="0" id="btnAll">全部</button>
     </div>
-    
-
-  <div class="sliders">
-    <div class="slider start"><label>Start</label><input id="sStart" type="range" min="0" max="100" value="0"></div>
-    
     <div class="src">
       <input id="csvUrl" type="url" placeholder="貼 Google Sheet 連結（CSV 或 /edit#gid= 連結均可）" />
       <button id="btnSaveSrc">儲存連結</button>
@@ -88,6 +78,10 @@ legend{padding:0 6px;color:#374151}
   </div>
   <div id="tip" class="tooltip"></div>
   <div class="legend" id="rangeLabel"></div>
+  <div class="range-slider">
+    <input id="sStart" type="range" min="0" max="100" value="0">
+    <input id="sEnd" type="range" min="0" max="100" value="100">
+  </div>
 
   <fieldset>
     <legend>權重（可改，將自動正規化至 100%）</legend>
@@ -108,9 +102,7 @@ legend{padding:0 6px;color:#374151}
       <button id="btnSaveW">儲存權重</button>
       <span class="note" id="wtMsg"></span>
     </div>
-  </fieldset><div class="slider mid"><label>Mid</label><input id="sMid" type="range" min="0" max="100" value="50"></div>
-    <div class="slider end"><label>End</label><input id="sEnd" type="range" min="0" max="100" value="100"></div>
-  </div>
+  </fieldset>
 </div>
 
 <script>
@@ -135,7 +127,7 @@ let rows=PRELOADED.rows.slice(); rows.sort((a,b)=>a.Date.localeCompare(b.Date));
 let weights = loadWeights() || DEFAULT_W;
 let start=0,end=0;
 const c=$('#c'); const ctx=c.getContext('2d'); const tip=$('#tip');
-const sStart=$('#sStart'), sMid=$('#sMid'), sEnd=$('#sEnd');
+const sStart=$('#sStart'), sEnd=$('#sEnd');
 const thrGEl=$('#thrG'),thrREl=$('#thrR'); const showBG=$('#showBG'), showFused=$('#showFused'), showFactors=$('#showFactors');
 const stateBadge=$('#stateBadge'), rangeLabel=$('#rangeLabel');
 const csvUrlEl=$('#csvUrl'), btnSaveSrc=$('#btnSaveSrc'), btnRefresh=$('#btnRefresh'), srcMsg=$('#srcMsg');
@@ -245,12 +237,22 @@ function resize(){ c.width=c.clientWidth*devicePixelRatio; c.height=c.clientHeig
 window.addEventListener('resize', resize);
 
 const MIN_VIEW_DAYS=5, DEFAULT_VIEW_DAYS=30;
+function updateRangeTrack(){
+  const min=parseInt(sStart.min||0), max=parseInt(sEnd.max||0);
+  const span=max-min||1;
+  const p1=(start-min)/span*100;
+  const p2=(end-min)/span*100;
+  const bg=`linear-gradient(to right, #e5e7eb ${p1}%, var(--range-bg) ${p1}%, var(--range-bg) ${p2}%, #e5e7eb ${p2}%)`;
+  sStart.style.background=bg; sEnd.style.background=bg;
+}
 function applyBounds(n){
   const minSpan=Math.max(1, Math.min(MIN_VIEW_DAYS, n-1));
-  start=Math.max(0, Math.min(start, Math.max(0,n-minSpan))); end=Math.max(start+minSpan, Math.min(end,n));
-  sStart.min=0; sStart.max=Math.max(0,n-minSpan); sEnd.min=minSpan; sEnd.max=Math.max(minSpan,n);
-  const span=Math.max(minSpan, end-start); const midMin=Math.round(span/2), midMax=Math.max(midMin, n-Math.round(span/2));
-  sMid.min=midMin; sMid.max=midMax; sStart.value=start; sEnd.value=end; sMid.value=Math.round((start+end-1)/2);
+  start=Math.max(0, Math.min(start, Math.max(0,n-minSpan)));
+  end=Math.max(start+minSpan, Math.min(end,n));
+  sStart.min=0; sStart.max=Math.max(0,n-minSpan);
+  sEnd.min=minSpan; sEnd.max=Math.max(minSpan,n);
+  sStart.value=start; sEnd.value=end;
+  updateRangeTrack();
 }
 function setWindowByPreset(days,n){
   if(days===0){start=0;end=n;document.querySelectorAll('button[data-win]').forEach(b=>b.classList.remove('active'));$('#btnAll').classList.add('active');}
@@ -316,7 +318,6 @@ function draw(){
 function hookSliders(){
   sStart.oninput=()=>{ const n=rows.length; const minSpan=Math.max(1, Math.min(5, n-1)); start=parseInt(sStart.value); end=Math.max(start+minSpan, end); applyBounds(n); draw(); saveState(); };
   sEnd.oninput=()=>{ const n=rows.length; const minSpan=Math.max(1, Math.min(5, n-1)); end=parseInt(sEnd.value); start=Math.min(end-minSpan, start); applyBounds(n); draw(); saveState(); };
-  sMid.oninput=()=>{ const n=rows.length; const span=end-start; let ns=clamp(parseInt(sMid.value), Math.round(span/2), n-Math.round(span/2)); const newStart=ns-Math.round(span/2); start=newStart; end=start+span; applyBounds(n); draw(); saveState(); };
 }
 
 document.querySelectorAll('button[data-win]').forEach(btn=> btn.addEventListener('click',()=>{ document.querySelectorAll('button[data-win]').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); const days=parseInt(btn.dataset.win)||0; setWindowByPreset(days,rows.length); }));

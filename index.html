@@ -136,8 +136,9 @@ const wtTbl=$('#wtTbl tbody'), btnSaveW=$('#btnSaveW'), wtMsg=$('#wtMsg');
 
 // === AMBER/RED: globals & helpers ===
 let EVENTS=[];           // 當前視窗內的事件點（供繪圖與 hover）
+let EVENT_MAP={};       // 以索引快速查詢事件
 let STATES=[];           // 每日狀態快取（Green / Range / Red）
-let COMP=[], PAD={L:0,R:0,W:0}; // 當前計算結果及畫布邊界資訊
+let COMP=[], PAD={L:0,R:0,W:0, UW:0, N:1}; // 當前計算結果及畫布邊界資訊
 
 function stateOf(score, g, r){
   if (!isFinite(score)) return 'Range';
@@ -147,8 +148,8 @@ function stateOf(score, g, r){
 }
 
 // 簡單的座標映射（需與你的 draw() 使用的一致）
-function xAt(i, x0, x1, start, end){
-  const n = Math.max(1, end - start - 1);
+function xAt(i, x0, x1, start, end, n){
+  n = n ?? Math.max(1, end - start - 1);
   return x0 + (i - start) * (x1 - x0) / n;
 }
 
@@ -164,19 +165,17 @@ function hideTip(){ tip.style.opacity = 0; }
 c.addEventListener('mousemove', (ev)=>{
   const rect = c.getBoundingClientRect();
   const mx = ev.clientX - rect.left;
-  const my = ev.clientY - rect.top;
 
   if (!COMP.length) { hideTip(); return; }
   if (mx < PAD.L || mx > PAD.W - PAD.R) { hideTip(); return; }
 
-  const usableW = PAD.W - PAD.L - PAD.R;
-  const n = Math.max(1, end - start - 1);
-  let idx = Math.round(start + (mx - PAD.L) * n / usableW);
+  let idx = Math.round(start + (mx - PAD.L) * PAD.N / PAD.UW);
   idx = Math.max(start, Math.min(end - 1, idx));
   const data = COMP[idx];
   if (!data) { hideTip(); return; }
-  let amber=false, red=false;
-  for (const e of EVENTS){ if (e.i === idx){ amber=e.amber; red=e.red; break; } }
+  const evt = EVENT_MAP[idx];
+  const amber = !!evt?.amber;
+  const red   = !!evt?.red;
   showTip(ev.clientX, ev.clientY, [
     `Date: ${data.date}`,
     `狀態: ${data.state}`,
@@ -272,8 +271,8 @@ function draw(){
   const view=comp.slice(start,end);
   const latest=comp[comp.length-1].state; stateBadge.textContent='狀態：'+latest; stateBadge.className='badge status '+(latest==='Green'?'':(latest==='Red'?'red':'range'));
   const padL=52,padR=22,padT=20,padB=48;
-  PAD={L:padL,R:padR,W:W};
-  const x=i=> padL + ((W-padL-padR)*(i/(view.length-1||1)));
+  PAD={L:padL,R:padR,W:W, UW:W-padL-padR, N:Math.max(1,end-start-1)};
+  const x=i=> padL + (PAD.UW*(i/(view.length-1||1)));
   const y=v=>{ const mn=-4.2,mx=4.2; return padT + (1-(v-mn)/(mx-mn))*(H-padT-padB); };
   if($('#showBG').checked && view.length>0){ let s=0,cur=view[0].state; for(let i=1;i<view.length;i++){ if(view[i].state!==cur){ shade(s,i-1,cur); s=i; cur=view[i].state; } } shade(s,view.length-1,cur);
     function shade(a,b,st){ const color=st==='Green'?COLORS.bgG:(st==='Red'?COLORS.bgR:COLORS.bgN); const x0=x(a),x1=x(b); ctx.fillStyle=color; ctx.fillRect(x0,padT,Math.max(1,x1-x0),H-padT-padB); } }
@@ -294,14 +293,17 @@ function draw(){
   }
 
   EVENTS = [];
+  EVENT_MAP = {};
   for (let i = Math.max(start+1, 1); i < end; i++) {
     const s0 = STATES[i-1], s1 = STATES[i];
     const amber = ((s0==='Green' && s1==='Range') || (s0==='Range' && s1==='Green'));
     const red   = (s0!=='Red' && s1==='Red');
     if (amber || red) {
-      const x = xAt(i, padL, W-padR, start, end);
+      const x = xAt(i, padL, W-padR, start, end, PAD.N);
       const y = red ? (H - padB - 10) : (padT + 10); // Red 底部，Amber 頂部
-      EVENTS.push({i, x, y, amber, red, date: comp[i].date, state: s1});
+      const evt = {i, x, y, amber, red, date: comp[i].date, state: s1};
+      EVENTS.push(evt);
+      EVENT_MAP[i] = evt;
     }
   }
 

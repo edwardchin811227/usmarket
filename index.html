@@ -188,8 +188,8 @@ legend{padding:0 6px;color:#374151}
     <div class="btns">
       <button data-win="365">1年</button>
       <button data-win="180">6个月</button>
-      <button data-win="90">3个月</button>
-      <button data-win="30" class="active">1个月</button>
+      <button data-win="90" class="active">3个月</button>
+      <button data-win="30">1个月</button>
       <button data-win="0" id="btnAll">全部</button>
     </div>
   </div>
@@ -422,7 +422,7 @@ function resize(){
 }
 window.addEventListener('resize', resize);
 
-const DEFAULT_VIEW_DAYS=30;
+const DEFAULT_VIEW_DAYS=90;
 function applyBounds(n){
   if(n === 0) return;
   
@@ -974,9 +974,9 @@ function init(){
     }catch{} 
   }
   document.querySelectorAll('button[data-win]').forEach(b=>b.classList.remove('active')); 
-  document.querySelector('button[data-win="30"]').classList.add('active');
+  document.querySelector('button[data-win="90"]').classList.add('active');
   buildWTable();
-  setWindowByPreset(30, rows.length); 
+  setWindowByPreset(90, rows.length); 
   hookSliders(); 
   resize();
   const savedSrc=(localStorage.getItem(KEY_SRC)||'').trim();

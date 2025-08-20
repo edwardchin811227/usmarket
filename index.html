@@ -19,21 +19,130 @@
 canvas{width:100%;height:100%;display:block;background:#fff}
 .tooltip{position:fixed;pointer-events:none;background:#111827;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;opacity:0;transition:opacity .12s;max-width:260px;box-shadow:0 8px 20px rgba(0,0,0,.15)}
 .legend{font-size:12px;color:#374151;display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:0 12px 8px}
-/* 时间范围选择器样式 */
-.time-range-container{margin:12px 0}
-.time-range-slider{position:relative;height:40px;margin:20px 0;cursor:pointer}
-.time-track{position:absolute;top:18px;left:0;right:0;height:4px;background:#e5e7eb;border-radius:2px}
-.time-selection{position:absolute;top:18px;height:4px;background:#2563eb;border-radius:2px;transition:all 0.1s ease}
-.time-handle{position:absolute;top:10px;width:20px;height:20px;background:#fff;border:2px solid #2563eb;border-radius:50%;cursor:grab;box-shadow:0 2px 4px rgba(0,0,0,0.1);transition:all 0.1s ease}
-.time-handle:hover{transform:scale(1.1);box-shadow:0 4px 8px rgba(0,0,0,0.15)}
-.time-handle:active{cursor:grabbing;transform:scale(1.15)}
-.time-handle-start{background:#059669;border-color:#059669}
-.time-handle-end{background:#ef4444;border-color:#ef4444}
-.time-range-slider.dragging{user-select:none}
-.time-range-slider.dragging *{pointer-events:none}
-.time-labels{display:flex;justify-content:space-between;font-size:12px;color:#6b7280;margin-top:8px}
-.time-labels .time-label{text-align:center;min-width:60px}
-.range-info{text-align:center;margin-top:8px;font-size:13px;color:#374151;font-weight:500}
+
+/* 新的现代化时间范围滑块样式 */
+.time-range-container{margin:16px 0;padding:0 4px}
+.time-range-slider{position:relative;height:50px;margin:24px 0;cursor:pointer;will-change:transform}
+
+/* 轨道背景 - 使用渐变和阴影 */
+.time-track{
+  position:absolute;
+  top:22px;
+  left:0;
+  right:0;
+  height:6px;
+  background:linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%);
+  border-radius:6px;
+  box-shadow:inset 0 2px 4px rgba(0,0,0,0.06);
+}
+
+/* 选中范围 - 透明蓝色玻璃质感 */
+.time-selection{
+  position:absolute;
+  top:22px;
+  height:6px;
+  background:linear-gradient(90deg, rgba(59,130,246,0.8) 0%, rgba(37,99,235,0.9) 50%, rgba(59,130,246,0.8) 100%);
+  border-radius:6px;
+  transition:all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow:0 2px 8px rgba(59,130,246,0.3), inset 0 1px 0 rgba(255,255,255,0.2);
+  backdrop-filter:blur(8px);
+}
+
+/* 手柄 - 玻璃质感设计 */
+.time-handle{
+  position:absolute;
+  top:14px;
+  width:22px;
+  height:22px;
+  background:linear-gradient(145deg, rgba(255,255,255,0.9), rgba(255,255,255,0.7));
+  border:2px solid rgba(59,130,246,0.6);
+  border-radius:50%;
+  cursor:grab;
+  transition:all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow:0 4px 12px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.8);
+  backdrop-filter:blur(10px);
+  will-change:transform;
+}
+
+.time-handle:hover{
+  transform:scale(1.15);
+  box-shadow:0 6px 20px rgba(59,130,246,0.4), inset 0 1px 0 rgba(255,255,255,0.9);
+  border-color:rgba(59,130,246,0.8);
+}
+
+.time-handle:active{
+  cursor:grabbing;
+  transform:scale(1.2);
+  box-shadow:0 8px 25px rgba(59,130,246,0.5), inset 0 1px 0 rgba(255,255,255,1);
+}
+
+/* 起始和结束手柄的不同颜色 */
+.time-handle-start{
+  background:linear-gradient(145deg, rgba(16,185,129,0.9), rgba(5,150,105,0.8));
+  border-color:rgba(16,185,129,0.7);
+}
+
+.time-handle-start:hover{
+  border-color:rgba(16,185,129,0.9);
+  box-shadow:0 6px 20px rgba(16,185,129,0.4), inset 0 1px 0 rgba(255,255,255,0.9);
+}
+
+.time-handle-end{
+  background:linear-gradient(145deg, rgba(239,68,68,0.9), rgba(220,38,38,0.8));
+  border-color:rgba(239,68,68,0.7);
+}
+
+.time-handle-end:hover{
+  border-color:rgba(239,68,68,0.9);
+  box-shadow:0 6px 20px rgba(239,68,68,0.4), inset 0 1px 0 rgba(255,255,255,0.9);
+}
+
+/* 拖拽状态优化 */
+.time-range-slider.dragging{
+  user-select:none;
+}
+
+.time-range-slider.dragging *{
+  pointer-events:none;
+}
+
+.time-range-slider.dragging .time-handle{
+  transition:none;
+}
+
+/* 时间标签美化 */
+.time-labels{
+  display:flex;
+  justify-content:space-between;
+  font-size:11px;
+  color:#64748b;
+  margin-top:12px;
+  font-weight:500;
+}
+
+.time-labels .time-label{
+  text-align:center;
+  min-width:50px;
+  padding:2px 6px;
+  background:rgba(248,250,252,0.8);
+  border-radius:4px;
+  backdrop-filter:blur(4px);
+}
+
+.range-info{
+  text-align:center;
+  margin-top:12px;
+  font-size:13px;
+  color:#374151;
+  font-weight:600;
+  padding:8px 16px;
+  background:linear-gradient(135deg, rgba(255,255,255,0.8), rgba(248,250,252,0.9));
+  border-radius:8px;
+  backdrop-filter:blur(8px);
+  border:1px solid rgba(226,232,240,0.5);
+  box-shadow:0 2px 8px rgba(0,0,0,0.04);
+}
+
 fieldset{border:1px dashed var(--border);padding:6px 10px;border-radius:10px;margin:8px 12px}
 legend{padding:0 6px;color:#374151}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}
@@ -51,14 +160,24 @@ legend{padding:0 6px;color:#374151}
 .presets .seg .segbtn:last-child{border-right:0}
 .presets .seg .segbtn.active{background:#111827;color:#fff}
 
+/* 隐藏权重配置区域 */
+.weight-config{display:none}
+
 /* 响应式调整 */
 @media (max-width: 768px) {
   .toolbar{flex-direction:column;align-items:stretch}
-  .time-range-container{margin:8px 0}
+  .time-range-container{margin:12px 0;padding:0 2px}
   .time-labels{font-size:10px}
-  .range-info{font-size:12px}
+  .range-info{font-size:12px;padding:6px 12px}
   .src{margin-top:12px;justify-content:center}
   .src input[type=url]{width:100%;max-width:none}
+  .time-handle{width:20px;height:20px;top:15px}
+}
+
+/* 性能优化 */
+.time-range-slider, .time-handle, .time-selection {
+  transform:translateZ(0);
+  backface-visibility:hidden;
 }
 </style>
 </head>
@@ -75,30 +194,6 @@ legend{padding:0 6px;color:#374151}
     </div>
   </div>
 
-  <!-- 时间范围控制区域 -->
-  <fieldset>
-    <legend>时间范围控制</legend>
-    <div class="time-range-container">
-      <div class="time-range-slider" id="timeRangeSlider">
-        <div class="time-track"></div>
-        <div class="time-selection" id="timeSelection"></div>
-        <div class="time-handle time-handle-start" id="handleStart"></div>
-        <div class="time-handle time-handle-end" id="handleEnd"></div>
-      </div>
-      <div class="time-labels" id="timeLabels"></div>
-      <div class="range-info">
-        <span id="rangeInfo">选择时间范围</span>
-      </div>
-    </div>
-    
-    <div class="src" style="display:none;">
-      <input id="csvUrl" type="url" placeholder="粘贴 Google Sheet 链接（CSV 或 /edit#gid= 链接均可）" />
-      <button id="btnSaveSrc">保存链接</button>
-      <button id="btnRefresh">立即更新</button>
-      <span id="srcMsg" class="note"></span>
-    </div>
-  </fieldset>
-
   <fieldset>
     <legend>阈值与显示设置</legend>
     <label>多头区 ≥ <input id="thrG" type="number" step="0.01" value="0.5" style="width:70px"></label>
@@ -114,7 +209,32 @@ legend{padding:0 6px;color:#374151}
   <div id="tip" class="tooltip"></div>
   <div class="legend" id="rangeLabel"></div>
 
+  <!-- 时间范围控制区域 - 移到图表下方 -->
   <fieldset>
+    <legend>时间范围控制</legend>
+    <div class="time-range-container">
+      <div class="time-range-slider" id="timeRangeSlider">
+        <div class="time-track"></div>
+        <div class="time-selection" id="timeSelection"></div>
+        <div class="time-handle time-handle-start" id="handleStart"></div>
+        <div class="time-handle time-handle-end" id="handleEnd"></div>
+      </div>
+      <div class="time-labels" id="timeLabels"></div>
+      <div class="range-info" style="display:none;">
+        <span id="rangeInfo">选择时间范围</span>
+      </div>
+    </div>
+    
+    <div class="src" style="display:none;">
+      <input id="csvUrl" type="url" placeholder="粘贴 Google Sheet 链接（CSV 或 /edit#gid= 链接均可）" />
+      <button id="btnSaveSrc">保存链接</button>
+      <button id="btnRefresh">立即更新</button>
+      <span id="srcMsg" class="note"></span>
+    </div>
+  </fieldset>
+
+  <!-- 权重配置区域已隐藏 -->
+  <fieldset class="weight-config">
     <legend>权重配置（可修改，将自动标准化至 100%）</legend>
     <div class="presets">
       <span style="color:#374151;margin-right:8px">快速配置：</span>
@@ -348,8 +468,8 @@ function updateTimeRangeDisplay(n) {
   timeSelection.style.width = `${endPercent - startPercent}%`;
   
   // 更新手柄位置
-  handleStart.style.left = `calc(${startPercent}% - 10px)`;
-  handleEnd.style.left = `calc(${endPercent}% - 10px)`;
+  handleStart.style.left = `calc(${startPercent}% - 11px)`;
+  handleEnd.style.left = `calc(${endPercent}% - 11px)`;
 }
 
 function updateRangeInfo(n) {

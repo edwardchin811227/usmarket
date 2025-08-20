@@ -19,16 +19,21 @@
 canvas{width:100%;height:100%;display:block;background:#fff}
 .tooltip{position:fixed;pointer-events:none;background:#111827;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;opacity:0;transition:opacity .12s;max-width:260px;box-shadow:0 8px 20px rgba(0,0,0,.15)}
 .legend{font-size:12px;color:#374151;display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:0 12px 8px}
-.sliders{display:flex;gap:12px;align-items:center;justify-content:center;margin:0;flex-wrap:wrap}
-.slider{display:flex;align-items:center;gap:8px}
-.slider label{width:46px;text-align:right;color:#374151}
-.slider input[type=range]{flex:1;min-width:80px;height:28px;-webkit-appearance:none;background:transparent}
-.slider input[type=range]::-webkit-slider-runnable-track{height:10px;background:#e5e7eb;border-radius:999px}
-.slider input[type=range]::-moz-range-track{height:10px;background:#e5e7eb;border-radius:999px}
-.slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;margin-top:-6px;background:#111827;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.25)}
-.slider.start input[type=range]::-webkit-slider-thumb{background:#059669}
-.slider.mid   input[type=range]::-webkit-slider-thumb{background:#2563eb}
-.slider.end   input[type=range]::-webkit-slider-thumb{background:#ef4444}
+/* 时间范围选择器样式 */
+.time-range-container{margin:12px 0}
+.time-range-slider{position:relative;height:40px;margin:20px 0;cursor:pointer}
+.time-track{position:absolute;top:18px;left:0;right:0;height:4px;background:#e5e7eb;border-radius:2px}
+.time-selection{position:absolute;top:18px;height:4px;background:#2563eb;border-radius:2px;transition:all 0.1s ease}
+.time-handle{position:absolute;top:10px;width:20px;height:20px;background:#fff;border:2px solid #2563eb;border-radius:50%;cursor:grab;box-shadow:0 2px 4px rgba(0,0,0,0.1);transition:all 0.1s ease}
+.time-handle:hover{transform:scale(1.1);box-shadow:0 4px 8px rgba(0,0,0,0.15)}
+.time-handle:active{cursor:grabbing;transform:scale(1.15)}
+.time-handle-start{background:#059669;border-color:#059669}
+.time-handle-end{background:#ef4444;border-color:#ef4444}
+.time-range-slider.dragging{user-select:none}
+.time-range-slider.dragging *{pointer-events:none}
+.time-labels{display:flex;justify-content:space-between;font-size:12px;color:#6b7280;margin-top:8px}
+.time-labels .time-label{text-align:center;min-width:60px}
+.range-info{text-align:center;margin-top:8px;font-size:13px;color:#374151;font-weight:500}
 fieldset{border:1px dashed var(--border);padding:6px 10px;border-radius:10px;margin:8px 12px}
 legend{padding:0 6px;color:#374151}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}
@@ -49,8 +54,9 @@ legend{padding:0 6px;color:#374151}
 /* 响应式调整 */
 @media (max-width: 768px) {
   .toolbar{flex-direction:column;align-items:stretch}
-  .sliders{justify-content:space-between}
-  .slider{flex:1;min-width:100px}
+  .time-range-container{margin:8px 0}
+  .time-labels{font-size:10px}
+  .range-info{font-size:12px}
   .src{margin-top:12px;justify-content:center}
   .src input[type=url]{width:100%;max-width:none}
 }
@@ -69,16 +75,23 @@ legend{padding:0 6px;color:#374151}
     </div>
   </div>
 
-  <!-- 滑动条区域 -->
+  <!-- 时间范围控制区域 -->
   <fieldset>
     <legend>时间范围控制</legend>
-    <div class="sliders">
-      <div class="slider start"><label>起始</label><input id="sStart" type="range" min="0" max="100" value="0"></div>
-      <div class="slider mid"><label>中点</label><input id="sMid" type="range" min="0" max="100" value="50"></div>
-      <div class="slider end"><label>结束</label><input id="sEnd" type="range" min="0" max="100" value="100"></div>
+    <div class="time-range-container">
+      <div class="time-range-slider" id="timeRangeSlider">
+        <div class="time-track"></div>
+        <div class="time-selection" id="timeSelection"></div>
+        <div class="time-handle time-handle-start" id="handleStart"></div>
+        <div class="time-handle time-handle-end" id="handleEnd"></div>
+      </div>
+      <div class="time-labels" id="timeLabels"></div>
+      <div class="range-info">
+        <span id="rangeInfo">选择时间范围</span>
+      </div>
     </div>
     
-    <div class="src">
+    <div class="src" style="display:none;">
       <input id="csvUrl" type="url" placeholder="粘贴 Google Sheet 链接（CSV 或 /edit#gid= 链接均可）" />
       <button id="btnSaveSrc">保存链接</button>
       <button id="btnRefresh">立即更新</button>
@@ -168,7 +181,9 @@ let start=0,end=0;
 const c=$('#c'); 
 const ctx=c.getContext('2d'); 
 const tip=$('#tip');
-const sStart=$('#sStart'), sMid=$('#sMid'), sEnd=$('#sEnd');
+const timeRangeSlider=$('#timeRangeSlider'), timeSelection=$('#timeSelection'), 
+      handleStart=$('#handleStart'), handleEnd=$('#handleEnd'),
+      timeLabels=$('#timeLabels'), rangeInfo=$('#rangeInfo');
 const thrGEl=$('#thrG'),thrREl=$('#thrR'); 
 const showBG=$('#showBG'), showFused=$('#showFused'), showFactors=$('#showFactors');
 const stateBadge=$('#stateBadge'), rangeLabel=$('#rangeLabel');
@@ -279,34 +294,87 @@ function resize(){
   c.width=c.clientWidth*devicePixelRatio; 
   c.height=c.clientHeight*devicePixelRatio; 
   ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); 
+  // 重新计算时间范围显示
+  if(rows.length > 0) {
+    applyBounds(rows.length);
+  }
   draw(); 
 }
 window.addEventListener('resize', resize);
 
-const MIN_VIEW_DAYS=5, DEFAULT_VIEW_DAYS=30;
+const DEFAULT_VIEW_DAYS=30;
 function applyBounds(n){
-  const minSpan=Math.max(1, Math.min(MIN_VIEW_DAYS, n-1));
-  start=Math.max(0, Math.min(start, Math.max(0,n-minSpan))); 
-  end=Math.max(start+minSpan, Math.min(end,n));
-  sStart.min=0; sStart.max=Math.max(0,n-minSpan); 
-  sEnd.min=minSpan; sEnd.max=Math.max(minSpan,n);
-  const span=Math.max(minSpan, end-start); 
-  const midMin=Math.round(span/2), midMax=Math.max(midMin, n-Math.round(span/2));
-  sMid.min=midMin; sMid.max=midMax; 
-  sStart.value=start; sEnd.value=end; sMid.value=Math.round((start+end-1)/2);
+  if(n === 0) return;
+  
+  // 确保范围有效
+  start = Math.max(0, Math.min(start, n-1));
+  end = Math.max(start+1, Math.min(end, n));
+  
+  // 更新时间轴标签
+  updateTimeLabels(n);
+  
+  // 更新选择器显示
+  updateTimeRangeDisplay(n);
+  
+  // 更新范围信息
+  updateRangeInfo(n);
+}
+
+function updateTimeLabels(n) {
+  if(n === 0) return;
+  
+  const labelCount = 8; // 显示8个时间标签
+  let labels = '';
+  
+  for(let i = 0; i < labelCount; i++) {
+    const idx = Math.floor(i * (n-1) / (labelCount-1));
+    const date = rows[idx]?.Date || '';
+    const shortDate = date ? date.slice(5) : ''; // 只显示月-日
+    labels += `<div class="time-label">${shortDate}</div>`;
+  }
+  
+  timeLabels.innerHTML = labels;
+}
+
+function updateTimeRangeDisplay(n) {
+  if(n === 0) return;
+  
+  const sliderWidth = timeRangeSlider.clientWidth;
+  const startPercent = start / (n-1) * 100;
+  const endPercent = end / (n-1) * 100;
+  
+  // 更新选择区域
+  timeSelection.style.left = `${startPercent}%`;
+  timeSelection.style.width = `${endPercent - startPercent}%`;
+  
+  // 更新手柄位置
+  handleStart.style.left = `calc(${startPercent}% - 10px)`;
+  handleEnd.style.left = `calc(${endPercent}% - 10px)`;
+}
+
+function updateRangeInfo(n) {
+  const days = end - start;
+  const startDate = rows[start]?.Date || '';
+  const endDate = rows[end-1]?.Date || '';
+  rangeInfo.textContent = `${startDate} ~ ${endDate} (${days}天)`;
 }
 
 function setWindowByPreset(days,n){
   if(days===0){
-    start=0;end=n;
+    start=0;
+    end=n;
     document.querySelectorAll('button[data-win]').forEach(b=>b.classList.remove('active'));
     $('#btnAll').classList.add('active');
   } else{ 
-    const span=Math.min(days,n); end=n; start=Math.max(0,n-span); 
+    const span=Math.min(days,n); 
+    end=n; 
+    start=Math.max(0,n-span);
     document.querySelectorAll('button[data-win]').forEach(b=>b.classList.remove('active')); 
     document.querySelector(`button[data-win="${days}"]`)?.classList.add('active'); 
   }
-  applyBounds(n); draw(); saveState();
+  applyBounds(n); 
+  draw(); 
+  saveState();
 }
 
 function draw(){
@@ -403,28 +471,74 @@ function draw(){
 }
 
 function hookSliders(){
-  sStart.oninput=()=>{ 
-    const n=rows.length; 
-    const minSpan=Math.max(1, Math.min(5, n-1)); 
-    start=parseInt(sStart.value); 
-    end=Math.max(start+minSpan, end); 
-    applyBounds(n); draw(); saveState(); 
-  };
-  sEnd.oninput=()=>{ 
-    const n=rows.length; 
-    const minSpan=Math.max(1, Math.min(5, n-1)); 
-    end=parseInt(sEnd.value); 
-    start=Math.min(end-minSpan, start); 
-    applyBounds(n); draw(); saveState(); 
-  };
-  sMid.oninput=()=>{ 
-    const n=rows.length; 
-    const span=end-start; 
-    let ns=clamp(parseInt(sMid.value), Math.round(span/2), n-Math.round(span/2)); 
-    const newStart=ns-Math.round(span/2); 
-    start=newStart; end=start+span; 
-    applyBounds(n); draw(); saveState(); 
-  };
+  let isDragging = false;
+  let dragTarget = null;
+  let initialMouseX = 0;
+  let initialStart = 0;
+  let initialEnd = 0;
+  
+  // 处理手柄拖拽
+  function handleMouseDown(e, target) {
+    isDragging = true;
+    dragTarget = target;
+    initialMouseX = e.clientX;
+    initialStart = start;
+    initialEnd = end;
+    
+    timeRangeSlider.classList.add('dragging');
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    e.preventDefault();
+  }
+  
+  function handleMouseMove(e) {
+    if (!isDragging || !dragTarget) return;
+    
+    const rect = timeRangeSlider.getBoundingClientRect();
+    const sliderWidth = rect.width;
+    const deltaX = e.clientX - initialMouseX;
+    const deltaPercent = (deltaX / sliderWidth) * 100;
+    const deltaIndex = Math.round((deltaPercent / 100) * (rows.length - 1));
+    
+    if (dragTarget === 'start') {
+      start = Math.max(0, Math.min(initialStart + deltaIndex, end - 5)); // 最少5天间隔
+    } else if (dragTarget === 'end') {
+      end = Math.max(start + 5, Math.min(initialEnd + deltaIndex, rows.length)); // 最少5天间隔
+    }
+    
+    applyBounds(rows.length);
+    draw();
+  }
+  
+  function handleMouseUp() {
+    isDragging = false;
+    dragTarget = null;
+    timeRangeSlider.classList.remove('dragging');
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    saveState();
+  }
+  
+  // 绑定手柄事件
+  handleStart.addEventListener('mousedown', (e) => handleMouseDown(e, 'start'));
+  handleEnd.addEventListener('mousedown', (e) => handleMouseDown(e, 'end'));
+  
+  // 点击轨道设置范围中心
+  timeRangeSlider.addEventListener('click', (e) => {
+    if (e.target === handleStart || e.target === handleEnd) return;
+    
+    const rect = timeRangeSlider.getBoundingClientRect();
+    const clickPercent = (e.clientX - rect.left) / rect.width;
+    const clickIndex = Math.round(clickPercent * (rows.length - 1));
+    const currentSpan = end - start;
+    
+    start = Math.max(0, Math.min(clickIndex - Math.floor(currentSpan/2), rows.length - currentSpan));
+    end = start + currentSpan;
+    
+    applyBounds(rows.length);
+    draw();
+    saveState();
+  });
 }
 
 document.querySelectorAll('button[data-win]').forEach(btn=> 
@@ -592,7 +706,9 @@ async function reloadFromSource(){
     srcMsg.textContent='未设置数据源，使用内置数据'; 
     srcMsg.className='note'; 
     rows=PRELOADED.rows.slice(); 
-    start=0; end=0; draw(); return; 
+    start=0; end=0; 
+    applyBounds(rows.length);
+    draw(); return; 
   }
   srcMsg.textContent='正在获取数据…'; 
   srcMsg.className='note';
@@ -600,7 +716,9 @@ async function reloadFromSource(){
     const csvText=await fetchCsvText(input); 
     const parsed=parseCsv(csvText); 
     if(parsed.length===0) throw new Error('CSV 无数据'); 
-    rows=parsed; start=0; end=0; draw(); 
+    rows=parsed; start=0; end=0; 
+    applyBounds(rows.length);
+    draw(); 
     srcMsg.textContent='数据已更新（CSV）'; 
     srcMsg.className='note ok'; 
     try{ localStorage.setItem(KEY_SRC, input); }catch(e){}; 
@@ -611,7 +729,9 @@ async function reloadFromSource(){
       const gviz=extractGvizUrl(input); 
       const parsed=await fetchGvizJson(gviz); 
       if(parsed.length===0) throw new Error('gviz 无数据'); 
-      rows=parsed; start=0; end=0; draw(); 
+      rows=parsed; start=0; end=0; 
+      applyBounds(rows.length);
+      draw(); 
       srcMsg.textContent='数据已更新（gviz JSON）'; 
       srcMsg.className='note ok'; 
       try{ localStorage.setItem(KEY_SRC, input); }catch(e){}; 
@@ -622,7 +742,9 @@ async function reloadFromSource(){
       srcMsg.textContent='获取数据失败（已回退至内置数据）'; 
       srcMsg.className='note err'; 
       rows=PRELOADED.rows.slice(); 
-      start=0; end=0; draw(); 
+      start=0; end=0; 
+      applyBounds(rows.length);
+      draw(); 
     }
   }
 }

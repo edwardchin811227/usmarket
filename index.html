@@ -279,7 +279,8 @@ const FACTOR_NAMES = {
 };
 
 const KEY_STATE='us8f_state', KEY_SRC='us8f_src', KEY_W='us8f_w';
-const DEFAULT_SRC='https://docs.google.com/spreadsheets/d/1sfCJcdIjZ4qrxS0u5zeKwlki7aQeu66WPSJOuFARJQ4/gviz/tq?tqx=out:csv&gid=0';
+const DEFAULT_SRC='./data/8-factors.csv';
+const LEGACY_GOOGLE_SHEET_ID='1sfCJcdIjZ4qrxS0u5zeKwlki7aQeu66WPSJOuFARJQ4';
 const FACTORS=['BTC_USD','USD_Index','TLT','HYG','US10Y_Yield','VIX','Nasdaq100','SP500'];
 const DEFAULT_W={ // direction: +1/-1；weight: 百分比（合計不必=100，會自動正規化）
   'BTC_USD':{dir:1,w:12.5}, 'USD_Index':{dir:-1,w:12.5}, 'TLT':{dir:-1,w:12.5}, 'HYG':{dir:1,w:12.5},
@@ -754,7 +755,7 @@ function extractGvizUrl(anyUrl){
 }
 
 async function fetchCsvText(url){ 
-  const u=new URL(url); 
+  const u=new URL(url, window.location.href); 
   u.searchParams.set('_',Date.now().toString()); 
   const res=await fetch(u.toString(),{mode:'cors'}); 
   if(!res.ok) throw new Error('HTTP '+res.status); 
@@ -787,7 +788,7 @@ function parseCsv(text){
 }
 
 async function fetchGvizJson(url){
-  const u=new URL(url); 
+  const u=new URL(url, window.location.href); 
   u.searchParams.set('tqx','out:json'); 
   u.searchParams.set('_',Date.now().toString());
   const res=await fetch(u.toString(),{mode:'cors'}); 
@@ -982,7 +983,11 @@ function init(){
   hookSliders(); 
   resize();
   const savedSrc=(localStorage.getItem(KEY_SRC)||'').trim();
-  csvUrlEl.value = savedSrc || DEFAULT_SRC;
+  const useDefault = !savedSrc || savedSrc.includes(LEGACY_GOOGLE_SHEET_ID);
+  csvUrlEl.value = useDefault ? DEFAULT_SRC : savedSrc;
+  if (useDefault) {
+    try { localStorage.setItem(KEY_SRC, DEFAULT_SRC); } catch(e) {}
+  }
   if(csvUrlEl.value) reloadFromSource();
   bindWeightAutoNormalize();
 }

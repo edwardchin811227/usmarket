@@ -280,7 +280,6 @@ const FACTOR_NAMES = {
 
 const KEY_STATE='us8f_state', KEY_SRC='us8f_src', KEY_W='us8f_w';
 const DEFAULT_SRC='./data/8-factors.csv';
-const LEGACY_GOOGLE_SHEET_ID='1sfCJcdIjZ4qrxS0u5zeKwlki7aQeu66WPSJOuFARJQ4';
 const FACTORS=['BTC_USD','USD_Index','TLT','HYG','US10Y_Yield','VIX','Nasdaq100','SP500'];
 const DEFAULT_W={ // direction: +1/-1；weight: 百分比（合計不必=100，會自動正規化）
   'BTC_USD':{dir:1,w:12.5}, 'USD_Index':{dir:-1,w:12.5}, 'TLT':{dir:-1,w:12.5}, 'HYG':{dir:1,w:12.5},
@@ -740,20 +739,6 @@ function saveWeights(w){
   weights=out;
 }
 
-function extractGvizUrl(anyUrl){
-  try{ 
-    const u=new URL(anyUrl); 
-    const parts=u.pathname.split('/'); 
-    const dIdx=parts.indexOf('d'); 
-    if(dIdx!==-1 && parts[dIdx+1]){ 
-      const id=parts[dIdx+1];
-      const gid=u.searchParams.get('gid') || (u.hash.match(/gid=(\d+)/)?.[1]) || '0';
-      return `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:json&gid=${gid}`; 
-    } 
-    return anyUrl; 
-  }catch{ return anyUrl; }
-}
-
 async function fetchCsvText(url){ 
   const u=new URL(url, window.location.href); 
   u.searchParams.set('_',Date.now().toString()); 
@@ -787,40 +772,6 @@ function parseCsv(text){
   return out;
 }
 
-async function fetchGvizJson(url){
-  const u=new URL(url, window.location.href); 
-  u.searchParams.set('tqx','out:json'); 
-  u.searchParams.set('_',Date.now().toString());
-  const res=await fetch(u.toString(),{mode:'cors'}); 
-  if(!res.ok) throw new Error('HTTP '+res.status);
-  const text=await res.text(); 
-  const m=text.match(/google\.visualization\.Query\.setResponse\((.*)\);?/s); 
-  if(!m) throw new Error('非 gviz JSON 格式');
-  const obj=JSON.parse(m[1]); 
-  const cols=obj.table.cols.map(c=>c.label);
-  const need=['Date','BTC_USD','USD_Index','TLT','HYG','US10Y_Yield','VIX','Nasdaq100','SP500']; 
-  if(!need.every(k=>cols.includes(k))) throw new Error('表头不含必需字段');
-  const cidx={}; need.forEach(k=> cidx[k]=cols.indexOf(k));
-  const out=[]; 
-  for(const r of obj.table.rows){ 
-    if(!r.c) continue; 
-    const toVal=c=> c? (c.f? c.f: c.v): null;
-    const row={
-      Date: toVal(r.c[cidx['Date']]), 
-      BTC_USD:+toVal(r.c[cidx['BTC_USD']]), 
-      USD_Index:+toVal(r.c[cidx['USD_Index']]), 
-      TLT:+toVal(r.c[cidx['TLT']]), 
-      HYG:+toVal(r.c[cidx['HYG']]), 
-      US10Y_Yield:+toVal(r.c[cidx['US10Y_Yield']]), 
-      VIX:+toVal(r.c[cidx['VIX']]), 
-      Nasdaq100:+toVal(r.c[cidx['Nasdaq100']]), 
-      SP500:+toVal(r.c[cidx['SP500']])
-    }; 
-    if(row.Date) out.push(row); 
-  }
-  return out;
-}
-
 async function reloadFromSource(){
   const input=(csvUrlEl.value||'').trim(); 
   if(!input){ 
@@ -847,28 +798,13 @@ async function reloadFromSource(){
     return; 
   }
   catch(e1){ 
-    try{ 
-      const gviz=extractGvizUrl(input); 
-      const parsed=await fetchGvizJson(gviz); 
-      if(parsed.length===0) throw new Error('gviz 无数据'); 
-      rows=parsed; 
-      // 修正：设置为最新3个月而非start=0, end=0
-      setWindowByPreset(90, rows.length);
-      draw(); 
-      srcMsg.textContent='数据已更新（gviz JSON）'; 
-      srcMsg.className='note ok'; 
-      try{ localStorage.setItem(KEY_SRC, input); }catch(e){}; 
-      return; 
-    }
-    catch(e2){ 
-      console.error('CSV错误:',e1,'GVIZ错误:',e2); 
-      srcMsg.textContent='获取数据失败（已回退至内置数据）'; 
-      srcMsg.className='note err'; 
-      rows=PRELOADED.rows.slice(); 
-      // 修正：设置为最新3个月而非start=0, end=0
-      setWindowByPreset(90, rows.length);
-      draw(); 
-    }
+    console.error('CSV错误:',e1); 
+    srcMsg.textContent='获取数据失败（已回退至内置数据）'; 
+    srcMsg.className='note err'; 
+    rows=PRELOADED.rows.slice(); 
+    // 修正：设置为最新3个月而非start=0, end=0
+    setWindowByPreset(90, rows.length);
+    draw(); 
   }
 }
 
@@ -983,7 +919,7 @@ function init(){
   hookSliders(); 
   resize();
   const savedSrc=(localStorage.getItem(KEY_SRC)||'').trim();
-  const useDefault = !savedSrc || savedSrc.includes(LEGACY_GOOGLE_SHEET_ID);
+  const useDefault = !savedSrc || /docs\.google\.com\/spreadsheets/i.test(savedSrc);
   csvUrlEl.value = useDefault ? DEFAULT_SRC : savedSrc;
   if (useDefault) {
     try { localStorage.setItem(KEY_SRC, DEFAULT_SRC); } catch(e) {}

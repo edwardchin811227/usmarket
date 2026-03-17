@@ -30,12 +30,26 @@ FRED_URLS = [
 ]
 
 
-def _http_get(url: str, timeout: int = 20) -> str:
+def _http_get(url: str, timeout: int = 20, retries: int = 3) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-        raw = resp.read()
-    return raw.decode("utf-8", errors="replace")
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                raw = resp.read()
+            return raw.decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code < 500:
+                raise
+            import time as _time
+            _time.sleep(2 ** attempt)
+        except (urllib.error.URLError, TimeoutError) as e:
+            last_err = e
+            import time as _time
+            _time.sleep(2 ** attempt)
+    raise last_err  # type: ignore[misc]
 
 
 def _parse_date_any(s: str) -> date:

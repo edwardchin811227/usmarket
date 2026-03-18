@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 NY_TZ = ZoneInfo("America/New_York")
 CSV_COLS = ["Date", "BTC_USD", "USD_Index", "TLT", "HYG", "US10Y_Yield", "VIX", "Nasdaq100", "SP500"]
+NUMERIC_COLS = CSV_COLS[1:]
 YF_MAP = {
     "BTC_USD": "BTC-USD",
     "USD_Index": "DX-Y.NYB",
@@ -22,6 +23,10 @@ YF_MAP = {
     "VIX": "^VIX",
     "Nasdaq100": "^NDX",
     "SP500": "^GSPC",
+}
+YF_FALLBACK_MAP = {
+    # DX-Y.NYB occasionally returns HTTP 500 from Yahoo. DX=F is a close proxy.
+    "USD_Index": ["DX=F"],
 }
 FRED_URLS = [
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10",
@@ -145,33 +150,40 @@ def resolve_market_date(cutoff_hhmm: str = "16:30") -> date:
 
 
 def _yahoo_last_close_with_date_on_or_before(symbol: str, target_date: date) -> Tuple[date, float]:
-    url = (
-        "https://query1.finance.yahoo.com/v8/finance/chart/"
-        + urllib.parse.quote(symbol, safe="")
-        + "?range=20d&interval=1d"
-    )
-    body = _http_get(url, timeout=20)
-    obj = json.loads(body)
-    r = (((obj.get("chart") or {}).get("result") or [None])[0]) or {}
-    ts = r.get("timestamp") or []
-    closes = (((r.get("indicators") or {}).get("quote") or [{}])[0].get("close") or [])
-    if not ts or not closes:
-        raise RuntimeError(f"Yahoo no data: {symbol}")
+    errors: List[str] = []
+    hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]
+    for host in hosts:
+        try:
+            url = (
+                f"https://{host}/v8/finance/chart/"
+                + urllib.parse.quote(symbol, safe="")
+                + "?range=20d&interval=1d"
+            )
+            body = _http_get(url, timeout=20)
+            obj = json.loads(body)
+            r = (((obj.get("chart") or {}).get("result") or [None])[0]) or {}
+            ts = r.get("timestamp") or []
+            closes = (((r.get("indicators") or {}).get("quote") or [{}])[0].get("close") or [])
+            if not ts or not closes:
+                raise RuntimeError(f"Yahoo no data: {symbol}")
 
-    best: Tuple[date, float] | None = None
-    for i, t in enumerate(ts):
-        if i >= len(closes):
-            break
-        c = closes[i]
-        if c is None:
-            continue
-        d = datetime.fromtimestamp(int(t), tz=timezone.utc).astimezone(NY_TZ).date()
-        if d <= target_date:
-            if (best is None) or (d > best[0]):
-                best = (d, float(c))
-    if best is None:
-        raise RuntimeError(f"Yahoo missing close <= {target_date} for {symbol}")
-    return best
+            best: Tuple[date, float] | None = None
+            for i, t in enumerate(ts):
+                if i >= len(closes):
+                    break
+                c = closes[i]
+                if c is None:
+                    continue
+                d = datetime.fromtimestamp(int(t), tz=timezone.utc).astimezone(NY_TZ).date()
+                if d <= target_date:
+                    if (best is None) or (d > best[0]):
+                        best = (d, float(c))
+            if best is None:
+                raise RuntimeError(f"Yahoo missing close <= {target_date} for {symbol}")
+            return best
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{host}: {e}")
+    raise RuntimeError(f"Yahoo failed for {symbol}: {' | '.join(errors)}")
 
 
 def _yahoo_last_close_on_or_before(symbol: str, target_date: date) -> float:
@@ -181,7 +193,19 @@ def _yahoo_last_close_on_or_before(symbol: str, target_date: date) -> float:
 def fetch_yahoo_bundle(target_date: date) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for col, sym in YF_MAP.items():
-        out[col] = _yahoo_last_close_on_or_before(sym, target_date)
+        symbols = [sym] + YF_FALLBACK_MAP.get(col, [])
+        last_err = None
+        for idx, candidate in enumerate(symbols):
+            try:
+                out[col] = _yahoo_last_close_on_or_before(candidate, target_date)
+                if idx > 0:
+                    print(f"yahoo_fallback_used={col}:{sym}->{candidate}")
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                continue
+        if col not in out:
+            raise RuntimeError(f"Failed to fetch {col} from Yahoo candidates {symbols}: {last_err}")
     return out
 
 
@@ -284,13 +308,26 @@ def read_existing(csv_path: Path) -> List[Dict[str, str]]:
         return []
     with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        rows = []
-        for r in reader:
+        by_date: Dict[str, Dict[str, str]] = {}
+        for line_no, r in enumerate(reader, start=2):
             if not any((r.get(c) or "").strip() for c in CSV_COLS):
                 continue
             out = {c: (r.get(c) or "").strip() for c in CSV_COLS}
-            out["Date"] = _ymd(_parse_date_any(out["Date"]))
-            rows.append(out)
+            try:
+                out["Date"] = _ymd(_parse_date_any(out["Date"]))
+                for c in NUMERIC_COLS:
+                    v = out[c]
+                    if v == "":
+                        raise ValueError(f"missing value in {c}")
+                    float(v)
+            except Exception as e:  # noqa: BLE001
+                print(f"warn: skip malformed row line={line_no}: {e}")
+                continue
+            if out["Date"] in by_date and by_date[out["Date"]] != out:
+                print(f"warn: duplicate date overwritten line={line_no} date={out['Date']}")
+            by_date[out["Date"]] = out
+    rows = list(by_date.values())
+    rows.sort(key=lambda x: x["Date"])
     return rows
 
 

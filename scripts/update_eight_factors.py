@@ -260,7 +260,7 @@ def fetch_dgs10(
     last_err = None
     for url in FRED_URLS:
         try:
-            txt = _http_get(url, timeout=18)
+            txt = _http_get(url, timeout=8, retries=1)
             dmap = _parse_fred_csv(txt)
             break
         except Exception as e:  # noqa: BLE001

@@ -149,15 +149,24 @@ def resolve_market_date(cutoff_hhmm: str = "16:30") -> date:
     return market_day
 
 
-def _yahoo_last_close_with_date_on_or_before(symbol: str, target_date: date) -> Tuple[date, float]:
+def _to_epoch(d: date) -> int:
+    return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp())
+
+
+def _yahoo_series(symbol: str, start_date: date, end_date: date) -> List[Tuple[date, float]]:
+    if end_date < start_date:
+        raise ValueError(f"invalid yahoo series window: {start_date}..{end_date}")
     errors: List[str] = []
     hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]
+    period1 = _to_epoch(start_date)
+    # Yahoo period2 is exclusive; add one day so end_date is included.
+    period2 = _to_epoch(end_date + timedelta(days=1))
     for host in hosts:
         try:
             url = (
                 f"https://{host}/v8/finance/chart/"
                 + urllib.parse.quote(symbol, safe="")
-                + "?range=20d&interval=1d"
+                + f"?period1={period1}&period2={period2}&interval=1d&events=history"
             )
             body = _http_get(url, timeout=20)
             obj = json.loads(body)
@@ -167,7 +176,7 @@ def _yahoo_last_close_with_date_on_or_before(symbol: str, target_date: date) -> 
             if not ts or not closes:
                 raise RuntimeError(f"Yahoo no data: {symbol}")
 
-            best: Tuple[date, float] | None = None
+            out: List[Tuple[date, float]] = []
             for i, t in enumerate(ts):
                 if i >= len(closes):
                     break
@@ -175,15 +184,22 @@ def _yahoo_last_close_with_date_on_or_before(symbol: str, target_date: date) -> 
                 if c is None:
                     continue
                 d = datetime.fromtimestamp(int(t), tz=timezone.utc).astimezone(NY_TZ).date()
-                if d <= target_date:
-                    if (best is None) or (d > best[0]):
-                        best = (d, float(c))
-            if best is None:
-                raise RuntimeError(f"Yahoo missing close <= {target_date} for {symbol}")
-            return best
+                if d < start_date or d > end_date:
+                    continue
+                out.append((d, float(c)))
+            if not out:
+                raise RuntimeError(f"Yahoo empty series in {start_date}..{end_date} for {symbol}")
+            out.sort(key=lambda x: x[0])
+            return out
         except Exception as e:  # noqa: BLE001
             errors.append(f"{host}: {e}")
     raise RuntimeError(f"Yahoo failed for {symbol}: {' | '.join(errors)}")
+
+
+def _yahoo_last_close_with_date_on_or_before(symbol: str, target_date: date) -> Tuple[date, float]:
+    start_date = target_date - timedelta(days=30)
+    series = _yahoo_series(symbol, start_date, target_date)
+    return series[-1]
 
 
 def _yahoo_last_close_on_or_before(symbol: str, target_date: date) -> float:
@@ -206,6 +222,51 @@ def fetch_yahoo_bundle(target_date: date) -> Dict[str, float]:
                 continue
         if col not in out:
             raise RuntimeError(f"Failed to fetch {col} from Yahoo candidates {symbols}: {last_err}")
+    return out
+
+
+def _choose_last_on_or_before(
+    s_map: Dict[str, float], target: date, start_date: date
+) -> Tuple[float, str]:
+    d = target
+    while d >= start_date:
+        k = _ymd(d)
+        if k in s_map:
+            return s_map[k], k
+        d -= timedelta(days=1)
+    raise RuntimeError(f"Yahoo missing close <= {_ymd(target)} in window starting {_ymd(start_date)}")
+
+
+def fetch_yahoo_bundle_range(start_date: date, end_date: date) -> Dict[str, Dict[str, float]]:
+    if end_date < start_date:
+        raise ValueError(f"invalid bundle range: {start_date}..{end_date}")
+    span_days = (end_date - start_date).days + 1
+    # Add lookback so non-trading targets can use last available close.
+    query_start = start_date - timedelta(days=45)
+    calendar = [start_date + timedelta(days=i) for i in range(span_days)]
+    out: Dict[str, Dict[str, float]] = {}
+    for col, sym in YF_MAP.items():
+        symbols = [sym] + YF_FALLBACK_MAP.get(col, [])
+        last_err = None
+        selected_map: Dict[str, float] | None = None
+        for idx, candidate in enumerate(symbols):
+            try:
+                series = _yahoo_series(candidate, query_start, end_date)
+                series_map = {_ymd(d): v for d, v in series}
+                filled: Dict[str, float] = {}
+                for d in calendar:
+                    v, _ = _choose_last_on_or_before(series_map, d, query_start)
+                    filled[_ymd(d)] = v
+                selected_map = filled
+                if idx > 0:
+                    print(f"yahoo_fallback_used={col}:{sym}->{candidate}")
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                continue
+        if selected_map is None:
+            raise RuntimeError(f"Failed to fetch {col} from Yahoo candidates {symbols}: {last_err}")
+        out[col] = selected_map
     return out
 
 
@@ -303,6 +364,89 @@ def fetch_dgs10(
     return YieldResult(value=float(dmap[chosen]), source_date=chosen, source_mode=f"DGS10_PREV_{source_kind}")
 
 
+def _load_dgs10_map(cache_csv: str = "") -> Tuple[Dict[str, str], str]:
+    source_kind = "FRED_HTTP"
+    last_err = None
+    for url in FRED_URLS:
+        try:
+            txt = _http_get(url, timeout=8, retries=1)
+            return _parse_fred_csv(txt), source_kind
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            continue
+    if cache_csv:
+        try:
+            return _parse_fred_file(Path(cache_csv)), "DGS10_CACHE_CSV"
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+    raise RuntimeError(f"FRED DGS10 download failed and cache unavailable: {last_err}")
+
+
+def _dgs10_from_map(dmap: Dict[str, str], target_date: date, mode: str, source_kind: str) -> YieldResult:
+    key = _ymd(target_date)
+    if mode == "exact":
+        v = (dmap.get(key) or "").strip()
+        if not v or v == ".":
+            raise RuntimeError(f"DGS10 exact missing for {key}")
+        return YieldResult(value=float(v), source_date=key, source_mode=f"DGS10_EXACT_{source_kind}")
+
+    valid_days = sorted(k for k, v in dmap.items() if (v or "").strip() not in ("", "."))
+    chosen = None
+    for k in reversed(valid_days):
+        if k <= key:
+            chosen = k
+            break
+    if not chosen:
+        raise RuntimeError(f"DGS10 no valid value <= {key}")
+    return YieldResult(value=float(dmap[chosen]), source_date=chosen, source_mode=f"DGS10_PREV_{source_kind}")
+
+
+def fetch_dgs10_range(
+    start_date: date,
+    end_date: date,
+    mode: str = "prev",
+    cache_csv: str = "",
+    fallback: str = "none",
+) -> Dict[str, YieldResult]:
+    if end_date < start_date:
+        raise ValueError(f"invalid dgs range: {start_date}..{end_date}")
+    out: Dict[str, YieldResult] = {}
+    try:
+        dmap, source_kind = _load_dgs10_map(cache_csv=cache_csv)
+        d = start_date
+        while d <= end_date:
+            out[_ymd(d)] = _dgs10_from_map(dmap, d, mode, source_kind)
+            d += timedelta(days=1)
+        return out
+    except Exception as fred_err:  # noqa: BLE001
+        if fallback != "yahoo_tnx":
+            raise
+
+        span_days = (end_date - start_date).days + 1
+        query_start = start_date - timedelta(days=45)
+        series = _yahoo_series("^TNX", query_start, end_date)
+        s_map = {_ymd(d): v for d, v in series}
+        for i in range(span_days):
+            d = start_date + timedelta(days=i)
+            key = _ymd(d)
+            if mode == "exact":
+                if key not in s_map:
+                    raise RuntimeError(f"Yahoo TNX exact missing for {key}") from fred_err
+                out[key] = YieldResult(
+                    value=float(s_map[key]),
+                    source_date=key,
+                    source_mode="DGS10_EXACT_YAHOO_TNX",
+                )
+            else:
+                v, source_key = _choose_last_on_or_before(s_map, d, query_start)
+                out[key] = YieldResult(
+                    value=float(v),
+                    source_date=source_key,
+                    source_mode="DGS10_PREV_YAHOO_TNX",
+                )
+        return out
+
+
 def read_existing(csv_path: Path) -> List[Dict[str, str]]:
     if not csv_path.exists():
         return []
@@ -373,6 +517,8 @@ def main() -> int:
     )
     p.add_argument("--cutoff", default="16:30", help="Market cutoff time in ET, format HH:MM")
     p.add_argument("--force-date", default="", help="Force market date (YYYY-MM-DD)")
+    p.add_argument("--start-date", default="", help="Backfill start date (YYYY-MM-DD)")
+    p.add_argument("--end-date", default="", help="Backfill end date (YYYY-MM-DD)")
     p.add_argument(
         "--us10y-mode",
         choices=["prev", "exact"],
@@ -393,6 +539,52 @@ def main() -> int:
     p.add_argument("--skip-non-trading-day", action="store_true", default=False)
     args = p.parse_args()
 
+    csv_path = Path(args.csv)
+    rows = read_existing(csv_path)
+
+    if args.start_date or args.end_date:
+        if not (args.start_date and args.end_date):
+            raise ValueError("Both --start-date and --end-date must be provided together")
+        start_date = _parse_date_any(args.start_date)
+        end_date = _parse_date_any(args.end_date)
+        if end_date < start_date:
+            raise ValueError("--end-date must be >= --start-date")
+
+        yahoo_map = fetch_yahoo_bundle_range(start_date, end_date)
+        us10y_map = fetch_dgs10_range(
+            start_date,
+            end_date,
+            mode=args.us10y_mode,
+            cache_csv=args.dgs_cache_csv,
+            fallback=args.us10y_fallback,
+        )
+
+        changed_count = 0
+        skipped_non_trading = 0
+        d = start_date
+        while d <= end_date:
+            if args.skip_non_trading_day and not is_us_stock_trading_day(d):
+                skipped_non_trading += 1
+                d += timedelta(days=1)
+                continue
+            key = _ymd(d)
+            bundle = {col: yahoo_map[col][key] for col in YF_MAP}
+            us10y = us10y_map[key]
+            new_row = _fmt_row(d, bundle, us10y)
+            rows, changed = upsert_row(rows, new_row)
+            if changed:
+                changed_count += 1
+            d += timedelta(days=1)
+
+        write_rows(csv_path, rows)
+        print(f"csv={csv_path}")
+        print(f"range_start={_ymd(start_date)}")
+        print(f"range_end={_ymd(end_date)}")
+        print(f"upsert_changed={changed_count}")
+        print(f"skipped_non_trading={skipped_non_trading}")
+        print(f"rows={len(rows)}")
+        return 0
+
     target = _parse_date_any(args.force_date) if args.force_date else resolve_market_date(args.cutoff)
     if args.skip_non_trading_day and not is_us_stock_trading_day(target):
         print(f"skip: {target} is not US stock trading day")
@@ -407,8 +599,6 @@ def main() -> int:
     )
     new_row = _fmt_row(target, bundle, us10y)
 
-    csv_path = Path(args.csv)
-    rows = read_existing(csv_path)
     rows, changed = upsert_row(rows, new_row)
     write_rows(csv_path, rows)
 

@@ -17,7 +17,7 @@
 .btns button.active{background:#111827;color:#fff;border-color:#111827}
 .canvas-box{position:relative;margin:12px;height:56vh;min-height:360px;border:1px solid var(--border);border-radius:12px;overflow:hidden}
 canvas{width:100%;height:100%;display:block;background:#fff}
-.tooltip{position:fixed;pointer-events:none;background:#111827;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;opacity:0;transition:opacity .12s;max-width:260px;box-shadow:0 8px 20px rgba(0,0,0,.15)}
+.tooltip{position:fixed;pointer-events:none;background:#111827;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;opacity:0;transition:opacity .12s;max-width:260px;box-shadow:0 8px 20px rgba(0,0,0,.15);white-space:pre-line}
 .legend{font-size:12px;color:#374151;display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:0 12px 8px}
 
 /* 新的现代化时间范围滑块样式 */
@@ -354,10 +354,11 @@ c.addEventListener('mousemove', (ev)=>{
   let amber=false, red=false;
   for (const e of EVENTS){ if (e.i === idx){ amber=e.amber; red=e.red; break; } }
   showTip(ev.clientX, ev.clientY, [
-    `日期: ${data.date}`,
-    `市场状态: ${STATE_NAMES[data.state] || data.state}`,
-    `风险警示: ${amber ? '是' : '否'}`,
-    `转空信号: ${red ? '是' : '否'}`
+    `Date: ${data.date}`,
+    `Score: ${Number.isFinite(data.disp) ? data.disp.toFixed(2) : '--'}`,
+    `状态: ${data.state}`,
+    `Amber: ${amber ? '有' : '无'}`,
+    `Red: ${red ? '有' : '无'}`
   ]);
 });
 c.addEventListener('mouseleave', hideTip);

@@ -41,15 +41,14 @@ def _http_get(url: str, timeout: int = 20, retries: int = 3) -> str:
     ctx = ssl.create_default_context()
     proxy_url = _os.environ.get("HTTPS_PROXY") or _os.environ.get("HTTP_PROXY") or ""
     proxy_url = proxy_url.strip()
+    handlers = [urllib.request.HTTPSHandler(context=ctx)]
     if proxy_url:
-        proxy_handler = urllib.request.ProxyHandler({"https": proxy_url, "http": proxy_url})
-        opener = urllib.request.build_opener(proxy_handler)
-    else:
-        opener = urllib.request.build_opener()
+        handlers.insert(0, urllib.request.ProxyHandler({"https": proxy_url, "http": proxy_url}))
+    opener = urllib.request.build_opener(*handlers)
     last_err: Exception | None = None
     for attempt in range(retries):
         try:
-            with opener.open(req, timeout=timeout, context=ctx) as resp:
+            with opener.open(req, timeout=timeout) as resp:
                 raw = resp.read()
             return raw.decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:

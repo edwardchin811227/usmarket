@@ -36,12 +36,20 @@ FRED_URLS = [
 
 
 def _http_get(url: str, timeout: int = 20, retries: int = 3) -> str:
+    import os as _os
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     ctx = ssl.create_default_context()
+    proxy_url = _os.environ.get("HTTPS_PROXY") or _os.environ.get("HTTP_PROXY") or ""
+    proxy_url = proxy_url.strip()
+    if proxy_url:
+        proxy_handler = urllib.request.ProxyHandler({"https": proxy_url, "http": proxy_url})
+        opener = urllib.request.build_opener(proxy_handler)
+    else:
+        opener = urllib.request.build_opener()
     last_err: Exception | None = None
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            with opener.open(req, timeout=timeout, context=ctx) as resp:
                 raw = resp.read()
             return raw.decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:

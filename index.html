@@ -179,6 +179,30 @@ legend{padding:0 6px;color:#374151}
   transform:translateZ(0);
   backface-visibility:hidden;
 }
+
+/* 信號事件列（Signal Events Panel） */
+.events{margin:12px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;display:none}
+.ev-head{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+.ev-title{font-weight:700;font-size:13px}
+.ev-filters{display:flex;gap:4px;align-items:center}
+.ev-filters button{padding:2px 10px;border:1px solid var(--border);border-radius:999px;background:#fff;cursor:pointer;font-size:11px;color:#374151}
+.ev-filters button.active{background:#111827;color:#fff;border-color:#111827}
+.ev-count{color:#6b7280;font-size:12px}
+.ev-note{color:#94a3b8;font-size:11px;margin-left:auto}
+.ev-rows{display:flex;flex-direction:column;gap:2px}
+.ev-row{display:grid;grid-template-columns:120px 64px 76px 1fr;gap:10px;align-items:center;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:12px}
+.ev-row:hover{background:#f0fdf4}
+.ev-row.is-active{background:#eef2ff}
+.ev-row-1d{background:#fffbeb;box-shadow:inset 3px 0 0 #f59e0b}
+.ev-row-1d:hover{background:#fef3c7}
+.ev-date{font-variant-numeric:tabular-nums}
+.ev-score{font-variant-numeric:tabular-nums;text-align:right;color:#374151;padding-right:10px;border-right:1px solid var(--border)}
+.ev-badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;text-align:center}
+.ev-badge.green{background:#d1fae5;color:#065f46}
+.ev-badge.red{background:#fee2e2;color:#991b1b}
+.ev-dur{color:#334155;display:flex;align-items:center;gap:8px;justify-content:flex-start;flex-wrap:wrap}
+.ev-badge.day1{background:#fef3c7;color:#92400e;outline:1px solid #f59e0b;font-weight:800}
+.ev-empty{color:#94a3b8;font-size:12px;padding:6px}
 </style>
 </head>
 <body>
@@ -232,6 +256,22 @@ legend{padding:0 6px;color:#374151}
       <span id="srcMsg" class="note"></span>
     </div>
   </fieldset>
+
+  <!-- 信號事件列（Signal Events Panel） -->
+  <div class="events" id="eventsPanel">
+    <div class="ev-head">
+      <span class="ev-title">信号事件</span>
+      <span class="ev-filters" id="evFilters">
+        <button data-ev="all"   class="active">全部</button>
+        <button data-ev="y1">1年</button>
+        <button data-ev="y2">2年</button>
+        <button data-ev="y3">3年</button>
+      </span>
+      <span class="ev-count" id="evCount"></span>
+      <span class="ev-note">点击该列跳到该日</span>
+    </div>
+    <div class="ev-rows" id="evRows"></div>
+  </div>
 
   <!-- 权重配置区域已隐藏 -->
   <fieldset class="weight-config">
@@ -309,11 +349,14 @@ const showBG=$('#showBG'), showFused=$('#showFused'), showFactors=$('#showFactor
 const stateBadge=$('#stateBadge'), rangeLabel=$('#rangeLabel');
 const csvUrlEl=$('#csvUrl'), btnSaveSrc=$('#btnSaveSrc'), btnRefresh=$('#btnRefresh'), srcMsg=$('#srcMsg');
 const wtTbl=$('#wtTbl tbody'), btnSaveW=$('#btnSaveW'), wtMsg=$('#wtMsg');
+const eventsPanel=$('#eventsPanel'), evRows=$('#evRows'), evCount=$('#evCount');
 
 // === 全局变量 ===
 let EVENTS=[];           // 當前視窗內的事件點（供繪圖與 hover）
 let STATES=[];           // 每日狀態快取（Green / Range / Red）
 let COMP=[], PAD={L:0,R:0,W:0}; // 當前計算結果及畫布邊界資訊
+let evRange='all';       // 信號事件列時間範圍（all / y1 / y2 / y3）
+let activeEvIdx=null;    // 最近點選的信號事件 startIdx（供重新渲染後維持高亮）
 
 function stateOf(score, g, r){
   if (!isFinite(score)) return 'Range';
@@ -423,7 +466,7 @@ function resize(){
 }
 window.addEventListener('resize', resize);
 
-const DEFAULT_VIEW_DAYS=90;
+const DEFAULT_VIEW_DAYS=90, MIN_VIEW_DAYS=5;
 function applyBounds(n){
   if(n === 0) return;
   
@@ -588,8 +631,67 @@ function draw(){
     ctx.fill();
   }
 
+  renderEvents();
   saveState();
 }
+
+// === 信號事件列（Signal Events Panel）===
+function renderEvents(){
+  const comp = COMP; if(!comp || comp.length===0){ eventsPanel.style.display='none'; return; }
+  // Group consecutive same-state runs across the WHOLE dataset.
+  const runs=[]; let i=0;
+  while(i<comp.length){
+    const st=comp[i].state; let j=i;
+    while(j<comp.length && comp[j].state===st) j++;
+    if(st==='Green'||st==='Red') runs.push({state:st, startIdx:i, endIdx:j-1, startDate:comp[i].date, endDate:comp[j-1].date, days:j-i});
+    i=j;
+  }
+  if(runs.length===0){ eventsPanel.style.display='none'; return; }
+  // Filter by selected time range (days back from the latest date).
+  const lastDate=new Date(comp[comp.length-1].date);
+  let cutoff=null;
+  if(evRange==='y1') cutoff=lastDate - 365*864e5;
+  else if(evRange==='y2') cutoff=lastDate - 730*864e5;
+  else if(evRange==='y3') cutoff=lastDate - 1095*864e5;
+  let selected=runs;
+  if(cutoff!==null) selected=runs.filter(r=> new Date(r.startDate)>=cutoff);
+  // Show newest first, capped for brevity.
+  const MAX_RUNS=40;
+  const recent=selected.slice(-MAX_RUNS).reverse();
+  let g=0,r=0; recent.forEach(x=>{ if(x.state==='Green')g++; else r++; });
+  evCount.textContent='显示 '+recent.length+' 个事件（共 '+selected.length+'）　Green '+g+'　Red '+r;
+  evRows.innerHTML=''; eventsPanel.style.display='block';
+  recent.forEach(run=>{
+    const row=document.createElement('div');
+    const is1 = run.days===1;
+    const act = run.startIdx===activeEvIdx;
+    row.className='ev-row'+(is1?' ev-row-1d':'')+(act?' is-active':'');
+    row.dataset.idx=run.startIdx;
+    row.innerHTML='<span class="ev-date">'+run.startDate+'</span>'+
+      '<span class="ev-score">'+comp[run.startIdx].disp.toFixed(2)+'</span>'+
+      '<span class="ev-badge '+(run.state==='Green'?'green':'red')+'">'+run.state+'</span>'+
+      '<span class="ev-dur">'+run.days+' 天 '+(is1?'<span class="ev-badge day1">仅1天</span>':'')+'</span>';
+    evRows.appendChild(row);
+  });
+}
+evRows.addEventListener('click', ev=>{
+  const row=ev.target.closest('.ev-row'); if(!row) return;
+  const idx=parseInt(row.dataset.idx,10);
+  activeEvIdx=idx;
+  const n=rows.length; const span=Math.max(MIN_VIEW_DAYS, Math.min(DEFAULT_VIEW_DAYS, end-start));
+  let ns=clamp(idx-Math.round(span/2), 0, Math.max(0,n-span));
+  start=ns; end=Math.min(n, ns+span);
+  document.querySelectorAll('button[data-win]').forEach(b=>b.classList.remove('active'));
+  applyBounds(n); draw();
+});
+document.querySelectorAll('#evFilters button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    evRange=btn.dataset.ev;
+    document.querySelectorAll('#evFilters button').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    renderEvents();
+  });
+});
 
 function hookSliders(){
   let isDragging = false;

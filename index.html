@@ -272,6 +272,22 @@ legend{padding:0 6px;color:#374151}
     <div class="ev-rows" id="evRows"></div>
   </div>
 
+  <!-- 策略回测面板：绿买 / 红卖 / 灰持（含确认过滤） -->
+  <fieldset>
+    <legend>策略回测：绿买 / 红卖 / 灰持</legend>
+    <label>确认天数 N <input id="confN" type="number" min="1" max="20" step="1" value="3" style="width:64px"></label>
+    <span class="note" style="margin-left:8px">状态需连续企稳 N 日先生效，过滤 1~2 日假信号（N=1 即不过滤）</span>
+    <div id="btStats" class="note" style="margin-top:6px;color:#111827;font-weight:600"></div>
+    <div class="canvas-box" style="height:34vh;min-height:220px;margin:8px 0">
+      <canvas id="btc"></canvas>
+    </div>
+    <div class="legend" style="padding:0">
+      <span style="color:#2563eb;font-weight:700">— 策略（绿买/红卖/灰持）</span>
+      <span style="color:#9ca3af;font-weight:700">— 买入持有 NDX</span>
+      <span class="note">现金部分不计息；起点为第 252 交易日（暖机后）</span>
+    </div>
+  </fieldset>
+
   <!-- 权重配置区域已隐藏 -->
   <fieldset class="weight-config">
     <legend>权重配置（可修改，将自动标准化至 100%）</legend>
@@ -345,6 +361,7 @@ const timeRangeSlider=$('#timeRangeSlider'), timeSelection=$('#timeSelection'),
       timeLabels=$('#timeLabels'), rangeInfo=$('#rangeInfo');
 const thrGEl=$('#thrG'),thrREl=$('#thrR'); 
 const showBG=$('#showBG'), showFused=$('#showFused'), showFactors=$('#showFactors');
+const btc=$('#btc'), btx=btc.getContext('2d'), confNEl=$('#confN'), btStats=$('#btStats');
 const stateBadge=$('#stateBadge'), rangeLabel=$('#rangeLabel');
 const csvUrlEl=$('#csvUrl'), btnSaveSrc=$('#btnSaveSrc'), btnRefresh=$('#btnRefresh'), srcMsg=$('#srcMsg');
 const wtTbl=$('#wtTbl tbody'), btnSaveW=$('#btnSaveW'), wtMsg=$('#wtMsg');
@@ -457,6 +474,7 @@ function resize(){
   c.width=c.clientWidth*devicePixelRatio; 
   c.height=c.clientHeight*devicePixelRatio; 
   ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); 
+  if(btc){ btc.width=btc.clientWidth*devicePixelRatio; btc.height=btc.clientHeight*devicePixelRatio; btx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); }
   // 重新计算时间范围显示
   if(rows.length > 0) {
     applyBounds(rows.length);
@@ -631,7 +649,66 @@ function draw(){
   }
 
   renderEvents();
+  drawBacktest();
   saveState();
+}
+
+// === 确认过滤（debounce）：状态需连续企稳 N 日先生效 ===
+function debounceStates(states, N){
+  if(N<=1) return states.slice();
+  const eff=new Array(states.length);
+  let cur=states[0], run=1; eff[0]=cur;
+  for(let i=1;i<states.length;i++){
+    run = (states[i]===states[i-1]) ? run+1 : 1;
+    if(run>=N && states[i]!==cur) cur=states[i];
+    eff[i]=cur;
+  }
+  return eff;
+}
+
+// === 策略回测：绿买 / 红卖 / 灰持（用确认后的状态）vs 买入持有 ===
+function drawBacktest(){
+  const comp=COMP; if(!comp || comp.length<10 || !btc) return;
+  const g=parseFloat(thrGEl.value||0.5), r=parseFloat(thrREl.value||-0.5);
+  const N=Math.max(1, parseInt(confNEl.value||'1',10)||1);
+  const states=comp.map(d=> stateOf(d.fused, g, r));
+  const eff=debounceStates(states, N);
+  const ndx=rows.map(x=> +x['Nasdaq100']);
+  const START=Math.min(252, Math.max(0, comp.length-2));
+  let eqS=1, eqB=1, pos=0, trades=0, inmkt=0, days=0;
+  const curveS=[], curveB=[], idxs=[];
+  for(let i=START+1;i<comp.length;i++){
+    const ret = ndx[i-1]>0 ? (ndx[i]/ndx[i-1]-1) : 0;
+    const s=eff[i-1];
+    const np = s==='Green'?1:(s==='Red'?0:pos);
+    if(np!==pos) trades++;
+    pos=np; inmkt+=pos; days++;
+    eqS*=(1+pos*ret); eqB*=(1+ret);
+    curveS.push(eqS); curveB.push(eqB); idxs.push(i);
+  }
+  if(curveS.length<2){ btStats.textContent=''; return; }
+  const years=days/252 || 1;
+  const cagrS=Math.pow(eqS,1/years)-1, cagrB=Math.pow(eqB,1/years)-1;
+  const mdd=(arr)=>{ let pk=-Infinity,m=0; for(const v of arr){ pk=Math.max(pk,v); m=Math.min(m, v/pk-1);} return m; };
+  const mddS=mdd(curveS), mddB=mdd(curveB);
+  btStats.innerHTML = `策略 <b>${eqS.toFixed(2)}x</b>｜年化 <b>${(cagrS*100).toFixed(1)}%</b>｜最大回撤 <b>${(mddS*100).toFixed(1)}%</b>｜在场 ${(inmkt/days*100).toFixed(0)}%｜交易 ${trades} 次　—　买入持有 ${eqB.toFixed(2)}x／年化 ${(cagrB*100).toFixed(1)}%／回撤 ${(mddB*100).toFixed(1)}%`;
+  // draw curves (log-y)
+  const W=btc.clientWidth, H=btc.clientHeight; btx.clearRect(0,0,W,H);
+  const padL=52,padR=12,padT=10,padB=22;
+  let lo=Infinity, hi=-Infinity;
+  for(const v of curveS){ lo=Math.min(lo,v); hi=Math.max(hi,v); }
+  for(const v of curveB){ lo=Math.min(lo,v); hi=Math.max(hi,v); }
+  const yl=v=>Math.log(Math.max(v,1e-6)); const lmn=yl(lo), lmx=yl(hi);
+  const X=k=> padL + (W-padL-padR)*(k/(curveS.length-1||1));
+  const Y=v=> padT + (1-(yl(v)-lmn)/((lmx-lmn)||1))*(H-padT-padB);
+  btx.strokeStyle='#e5e7eb'; btx.lineWidth=1; btx.fillStyle='#9ca3af'; btx.font='11px system-ui'; btx.textAlign='right';
+  [1,2,3,4,5].forEach(gv=>{ if(gv>=lo&&gv<=hi){ const yy=Y(gv); btx.beginPath(); btx.moveTo(padL,yy); btx.lineTo(W-padR,yy); btx.stroke(); btx.fillText(gv+'x', padL-6, yy+3); } });
+  const line=(curve,color,w)=>{ btx.beginPath(); btx.strokeStyle=color; btx.lineWidth=w; curve.forEach((v,k)=>{ const xx=X(k),yy=Y(v); k?btx.lineTo(xx,yy):btx.moveTo(xx,yy); }); btx.stroke(); };
+  line(curveB,'#9ca3af',1.4);
+  line(curveS,'#2563eb',1.9);
+  btx.fillStyle='#64748b'; btx.textAlign='center';
+  btx.fillText(comp[idxs[0]]?.date||'', padL+34, H-6);
+  btx.fillText(comp[idxs[idxs.length-1]]?.date||'', W-padR-34, H-6);
 }
 
 // === 信號事件列（Signal Events Panel）===
@@ -775,6 +852,7 @@ document.querySelectorAll('button[data-win]').forEach(btn=>
 [thrGEl,thrREl,showBG,showFused,showFactors].forEach(el=> 
   el.addEventListener('change', ()=>{ draw(); saveState(); })
 );
+if(confNEl){ ['change','input'].forEach(ev=> confNEl.addEventListener(ev, ()=> drawBacktest())); }
 
 function saveState(){
   const s={

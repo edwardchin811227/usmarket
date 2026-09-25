@@ -160,8 +160,8 @@ legend{padding:0 6px;color:#374151}
 .presets .seg .segbtn:last-child{border-right:0}
 .presets .seg .segbtn.active{background:#111827;color:#fff}
 
-/* 隐藏权重配置区域 */
-.weight-config{display:none}
+/* 权重与方向配置区域 */
+.weight-config{display:block}
 
 /* 响应式调整 */
 @media (max-width: 768px) {
@@ -272,7 +272,7 @@ legend{padding:0 6px;color:#374151}
     <div class="ev-rows" id="evRows"></div>
   </div>
 
-  <!-- 权重配置区域已隐藏 -->
+  <!-- 权重与方向配置区域 -->
   <fieldset class="weight-config">
     <legend>权重配置（可修改，将自动标准化至 100%）</legend>
     <div class="presets">
@@ -428,7 +428,9 @@ function nVIXpct(arr,i){
 function compute(rows, thrG, thrR){
   const series={}; FACTORS.forEach(f=> series[f]=rows.map(r=>+r[f]));
   const n=rows.length; const out=[];
+  const w = getWVec(); const dv = getDirVec();
   for(let i=0;i<n;i++){ const v={};
+    // 原始正規化值：已內含各因子「預設方向」（由 nRiskOn/nRiskRev/nVIXpct 的選擇決定）
     v['BTC_USD']=nRiskOn(series['BTC_USD'],i);
     v['USD_Index']=nRiskRev(series['USD_Index'],i);
     v['TLT']=nRiskRev(series['TLT'],i);
@@ -438,7 +440,13 @@ function compute(rows, thrG, thrR){
     v['Nasdaq100']=nRiskOn(series['Nasdaq100'],i);
     v['SP500']=nRiskOn(series['SP500'],i);
     for(const k in v) if(!isFinite(v[k])) v[k]=0;
-    const w = getWVec(); let fused=0; FACTORS.forEach((f,idx)=> fused += v[f]*w[idx]);
+    // 方向 dir 在此真正生效：相對於預設方向施加符號。
+    // 當使用者所選 dir 與預設一致時 rel=+1（輸出與舊版完全一致，含臨界點）；反向時 rel=-1。
+    let fused=0; FACTORS.forEach((f,idx)=>{
+      const rel = dv[idx] * ((DEFAULT_W[f]?.dir||1)>=0?1:-1);
+      v[f] = v[f]*rel;
+      fused += v[f]*w[idx];
+    });
     const disp=Math.max(-4,Math.min(4,fused*4));
     const st=fused>=thrG?'Green':(fused<=thrR?'Red':'Range');
     out.push({date:rows[i].Date, vals:v, fused, disp, state:st});
@@ -451,6 +459,11 @@ function getWVec(){
   if(sum<=0) sum=1;
   FACTORS.forEach(f=> arr.push( (Math.max(0,+weights[f]?.w||0)/sum) * 1 )); 
   return arr;
+}
+
+// 使用者可配置的方向向量（+1/-1），供 compute() 施加到各因子貢獻上
+function getDirVec(){
+  return FACTORS.map(f=> ((weights[f]?.dir||1)>=0?1:-1) );
 }
 
 function resize(){ 
@@ -810,6 +823,8 @@ function buildWTable(){
       const cur=(weights[f]?.dir||1)>=0?1:-1; 
       weights[f]={...weights[f], dir: -cur}; 
       btn.textContent = cur>0?'-':'+'; 
+      saveWeights(weights); // 持久化方向
+      draw();               // 立即重算並重繪綜合指標
     })
   );
 }

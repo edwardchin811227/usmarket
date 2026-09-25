@@ -276,6 +276,12 @@ legend{padding:0 6px;color:#374151}
   <fieldset>
     <legend>策略回测：绿买 / 红卖 / 灰持</legend>
     <label>确认天数 N <input id="confN" type="number" min="1" max="20" step="1" value="3" style="width:64px"></label>
+    <label style="margin-left:12px">灰色处理
+      <select id="greyRule">
+        <option value="edge">绿转灰空仓 / 红转灰买入</option>
+        <option value="hold">灰色维持仓位</option>
+      </select>
+    </label>
     <span class="note" style="margin-left:8px">状态需连续企稳 N 日先生效，过滤 1~2 日假信号（N=1 即不过滤）</span>
     <div id="btStats" class="note" style="margin-top:6px;color:#111827;font-weight:600"></div>
     <div class="canvas-box" style="height:34vh;min-height:220px;margin:8px 0">
@@ -361,7 +367,7 @@ const timeRangeSlider=$('#timeRangeSlider'), timeSelection=$('#timeSelection'),
       timeLabels=$('#timeLabels'), rangeInfo=$('#rangeInfo');
 const thrGEl=$('#thrG'),thrREl=$('#thrR'); 
 const showBG=$('#showBG'), showFused=$('#showFused'), showFactors=$('#showFactors');
-const btc=$('#btc'), btx=btc.getContext('2d'), confNEl=$('#confN'), btStats=$('#btStats');
+const btc=$('#btc'), btx=btc.getContext('2d'), confNEl=$('#confN'), btStats=$('#btStats'), greyRuleEl=$('#greyRule');
 const stateBadge=$('#stateBadge'), rangeLabel=$('#rangeLabel');
 const csvUrlEl=$('#csvUrl'), btnSaveSrc=$('#btnSaveSrc'), btnRefresh=$('#btnRefresh'), srcMsg=$('#srcMsg');
 const wtTbl=$('#wtTbl tbody'), btnSaveW=$('#btnSaveW'), wtMsg=$('#wtMsg');
@@ -674,13 +680,23 @@ function drawBacktest(){
   const states=comp.map(d=> stateOf(d.fused, g, r));
   const eff=debounceStates(states, N);
   const ndx=rows.map(x=> +x['Nasdaq100']);
+  const greyRule=(greyRuleEl && greyRuleEl.value) || 'edge';
+  // 仓位序列：Green→满仓、Red→空仓；灰色按所选规则：
+  //  edge = 绿转灰→空仓、红转灰→买入（其余灰维持）；hold = 灰色一律维持
+  const posArr=new Array(comp.length).fill(0); let pp=0;
+  for(let i=0;i<comp.length;i++){
+    const s=eff[i], sp=i>0?eff[i-1]:null;
+    if(s==='Green') pp=1;
+    else if(s==='Red') pp=0;
+    else if(greyRule==='edge'){ if(sp==='Green') pp=0; else if(sp==='Red') pp=1; }
+    posArr[i]=pp;
+  }
   const START=Math.min(252, Math.max(0, comp.length-2));
   let eqS=1, eqB=1, pos=0, trades=0, inmkt=0, days=0;
   const curveS=[], curveB=[], idxs=[];
   for(let i=START+1;i<comp.length;i++){
     const ret = ndx[i-1]>0 ? (ndx[i]/ndx[i-1]-1) : 0;
-    const s=eff[i-1];
-    const np = s==='Green'?1:(s==='Red'?0:pos);
+    const np = posArr[i-1];
     if(np!==pos) trades++;
     pos=np; inmkt+=pos; days++;
     eqS*=(1+pos*ret); eqB*=(1+ret);
@@ -853,6 +869,7 @@ document.querySelectorAll('button[data-win]').forEach(btn=>
   el.addEventListener('change', ()=>{ draw(); saveState(); })
 );
 if(confNEl){ ['change','input'].forEach(ev=> confNEl.addEventListener(ev, ()=> drawBacktest())); }
+if(greyRuleEl){ greyRuleEl.addEventListener('change', ()=> drawBacktest()); }
 
 function saveState(){
   const s={

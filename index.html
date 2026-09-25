@@ -272,10 +272,12 @@ legend{padding:0 6px;color:#374151}
     <div class="ev-rows" id="evRows"></div>
   </div>
 
-  <!-- 策略回测面板：绿买 / 红卖 / 灰持（含确认过滤） -->
+  <!-- 策略回测面板：绿买 / 红卖（灰色按所选规则；门槛独立于上方显示门槛，含确认过滤） -->
   <fieldset>
-    <legend>策略回测：绿买 / 红卖 / 灰持</legend>
-    <label>确认天数 N <input id="confN" type="number" min="1" max="20" step="1" value="3" style="width:64px"></label>
+    <legend>策略回测：绿买 / 红卖（灰色按规则）</legend>
+    <label>策略多头区 ≥ <input id="stThrG" type="number" step="0.01" value="0.3" style="width:70px"></label>
+    <label style="margin-left:8px">策略空头区 ≤ <input id="stThrR" type="number" step="0.01" value="-0.5" style="width:70px"></label>
+    <label style="margin-left:12px">确认天数 N <input id="confN" type="number" min="1" max="20" step="1" value="5" style="width:64px"></label>
     <label style="margin-left:12px">灰色处理
       <select id="greyRule">
         <option value="edge">绿转灰空仓 / 红转灰买入</option>
@@ -283,12 +285,13 @@ legend{padding:0 6px;color:#374151}
       </select>
     </label>
     <span class="note" style="margin-left:8px">状态需连续企稳 N 日先生效，过滤 1~2 日假信号（N=1 即不过滤）</span>
+    <div class="note" style="margin-top:4px">策略门槛<b>独立</b>于上方「阈值与显示设置」——改动显示门槛不会影响回测结果。默认 0.30 / −0.50 / N=5 为 2017-12～2026-09 网格回测的最优区间（N=3 会明显变差）。</div>
     <div id="btStats" class="note" style="margin-top:6px;color:#111827;font-weight:600"></div>
     <div class="canvas-box" style="height:34vh;min-height:220px;margin:8px 0">
       <canvas id="btc"></canvas>
     </div>
     <div class="legend" style="padding:0">
-      <span style="color:#2563eb;font-weight:700">— 策略（绿买/红卖/灰持）</span>
+      <span style="color:#2563eb;font-weight:700">— 策略（绿买/红卖）</span>
       <span style="color:#9ca3af;font-weight:700">— 买入持有 NDX</span>
       <span class="note">现金部分不计息；起点为第 252 交易日（暖机后）</span>
     </div>
@@ -367,7 +370,7 @@ const timeRangeSlider=$('#timeRangeSlider'), timeSelection=$('#timeSelection'),
       timeLabels=$('#timeLabels'), rangeInfo=$('#rangeInfo');
 const thrGEl=$('#thrG'),thrREl=$('#thrR'); 
 const showBG=$('#showBG'), showFused=$('#showFused'), showFactors=$('#showFactors');
-const btc=$('#btc'), btx=btc.getContext('2d'), confNEl=$('#confN'), btStats=$('#btStats'), greyRuleEl=$('#greyRule');
+const btc=$('#btc'), btx=btc.getContext('2d'), confNEl=$('#confN'), btStats=$('#btStats'), greyRuleEl=$('#greyRule'), stThrGEl=$('#stThrG'), stThrREl=$('#stThrR');
 const stateBadge=$('#stateBadge'), rangeLabel=$('#rangeLabel');
 const csvUrlEl=$('#csvUrl'), btnSaveSrc=$('#btnSaveSrc'), btnRefresh=$('#btnRefresh'), srcMsg=$('#srcMsg');
 const wtTbl=$('#wtTbl tbody'), btnSaveW=$('#btnSaveW'), wtMsg=$('#wtMsg');
@@ -672,10 +675,13 @@ function debounceStates(states, N){
   return eff;
 }
 
-// === 策略回测：绿买 / 红卖 / 灰持（用确认后的状态）vs 买入持有 ===
+// === 策略回测：绿买 / 红卖（灰色按规则，用独立策略门槛；用确认后的状态）vs 买入持有 ===
 function drawBacktest(){
   const comp=COMP; if(!comp || comp.length<10 || !btc) return;
-  const g=parseFloat(thrGEl.value||0.5), r=parseFloat(thrREl.value||-0.5);
+  // 策略门槛独立于上方显示门槛：默认 0.30 / -0.50（回测最优区间），改显示门槛不影响这里
+  const gRaw=(stThrGEl && stThrGEl.value!=='')?parseFloat(stThrGEl.value):0.3;
+  const rRaw=(stThrREl && stThrREl.value!=='')?parseFloat(stThrREl.value):-0.5;
+  const g=isFinite(gRaw)?gRaw:0.3, r=isFinite(rRaw)?rRaw:-0.5;
   const N=Math.max(1, parseInt(confNEl.value||'1',10)||1);
   const states=comp.map(d=> stateOf(d.fused, g, r));
   const eff=debounceStates(states, N);
@@ -868,13 +874,18 @@ document.querySelectorAll('button[data-win]').forEach(btn=>
 [thrGEl,thrREl,showBG,showFused,showFactors].forEach(el=> 
   el.addEventListener('change', ()=>{ draw(); saveState(); })
 );
-if(confNEl){ ['change','input'].forEach(ev=> confNEl.addEventListener(ev, ()=> drawBacktest())); }
-if(greyRuleEl){ greyRuleEl.addEventListener('change', ()=> drawBacktest()); }
+if(confNEl){ ['change','input'].forEach(ev=> confNEl.addEventListener(ev, ()=>{ drawBacktest(); saveState(); })); }
+if(greyRuleEl){ greyRuleEl.addEventListener('change', ()=>{ drawBacktest(); saveState(); }); }
+[stThrGEl,stThrREl].forEach(el=>{ if(el) ['change','input'].forEach(ev=> el.addEventListener(ev, ()=>{ drawBacktest(); saveState(); })); });
 
 function saveState(){
   const s={
     thrG:+thrGEl.value,
     thrR:+thrREl.value,
+    stThrG:+stThrGEl.value,
+    stThrR:+stThrREl.value,
+    confN:+confNEl.value,
+    greyRule:greyRuleEl?greyRuleEl.value:'edge',
     showBG:showBG.checked,
     showFused:showFused.checked,
     showFactors:showFactors.checked,
@@ -1104,6 +1115,10 @@ function init(){
     try{ 
       thrGEl.value=isFinite(st.thrG)?st.thrG:0.5; 
       thrREl.value=isFinite(st.thrR)?st.thrR:-0.5; 
+      stThrGEl.value=isFinite(st.stThrG)?st.stThrG:0.3; 
+      stThrREl.value=isFinite(st.stThrR)?st.stThrR:-0.5; 
+      confNEl.value=isFinite(st.confN)?st.confN:5; 
+      if(greyRuleEl) greyRuleEl.value=st.greyRule||'edge'; 
       showBG.checked=st.showBG!==false; 
       showFused.checked=st.showFused!==false; 
       showFactors.checked=!!st.showFactors; 

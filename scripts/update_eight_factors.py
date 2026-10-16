@@ -28,6 +28,10 @@ YF_FALLBACK_MAP = {
     # DX-Y.NYB occasionally returns HTTP 500 from Yahoo. DX=F is a close proxy.
     "USD_Index": ["DX=F"],
 }
+# Columns fetched on a total-return (dividend/split adjusted) basis via Yahoo
+# adjClose. Only dividend-paying ETFs need this; price indices and FX have
+# adjClose == close, so leaving them on raw close is fine.
+ADJUSTED_COLS = {"TLT", "HYG"}
 FRED_URLS = [
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10",
     "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=2000-01-01",
@@ -160,7 +164,9 @@ def _to_epoch(d: date) -> int:
     return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp())
 
 
-def _yahoo_series(symbol: str, start_date: date, end_date: date) -> List[Tuple[date, float]]:
+def _yahoo_series(
+    symbol: str, start_date: date, end_date: date, field: str = "close"
+) -> List[Tuple[date, float]]:
     if end_date < start_date:
         raise ValueError(f"invalid yahoo series window: {start_date}..{end_date}")
     errors: List[str] = []
@@ -179,15 +185,25 @@ def _yahoo_series(symbol: str, start_date: date, end_date: date) -> List[Tuple[d
             obj = json.loads(body)
             r = (((obj.get("chart") or {}).get("result") or [None])[0]) or {}
             ts = r.get("timestamp") or []
-            closes = (((r.get("indicators") or {}).get("quote") or [{}])[0].get("close") or [])
-            if not ts or not closes:
+            ind = r.get("indicators") or {}
+            closes = ((ind.get("quote") or [{}])[0].get("close") or [])
+            # Prefer dividend/split-adjusted series when requested and available;
+            # fall back to raw close (adjClose == close for indices/FX anyway).
+            vals = closes
+            if field == "adjclose":
+                adj = ((ind.get("adjclose") or [{}])[0].get("adjclose") or [])
+                if len(adj) == len(closes) and any(v is not None for v in adj):
+                    vals = adj
+                else:
+                    errors.append(f"{host}: adjclose unavailable for {symbol}, used close")
+            if not ts or not vals:
                 raise RuntimeError(f"Yahoo no data: {symbol}")
 
             out: List[Tuple[date, float]] = []
             for i, t in enumerate(ts):
-                if i >= len(closes):
+                if i >= len(vals):
                     break
-                c = closes[i]
+                c = vals[i]
                 if c is None:
                     continue
                 d = datetime.fromtimestamp(int(t), tz=timezone.utc).astimezone(NY_TZ).date()
@@ -203,24 +219,27 @@ def _yahoo_series(symbol: str, start_date: date, end_date: date) -> List[Tuple[d
     raise RuntimeError(f"Yahoo failed for {symbol}: {' | '.join(errors)}")
 
 
-def _yahoo_last_close_with_date_on_or_before(symbol: str, target_date: date) -> Tuple[date, float]:
+def _yahoo_last_close_with_date_on_or_before(
+    symbol: str, target_date: date, field: str = "close"
+) -> Tuple[date, float]:
     start_date = target_date - timedelta(days=30)
-    series = _yahoo_series(symbol, start_date, target_date)
+    series = _yahoo_series(symbol, start_date, target_date, field=field)
     return series[-1]
 
 
-def _yahoo_last_close_on_or_before(symbol: str, target_date: date) -> float:
-    return _yahoo_last_close_with_date_on_or_before(symbol, target_date)[1]
+def _yahoo_last_close_on_or_before(symbol: str, target_date: date, field: str = "close") -> float:
+    return _yahoo_last_close_with_date_on_or_before(symbol, target_date, field=field)[1]
 
 
 def fetch_yahoo_bundle(target_date: date) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for col, sym in YF_MAP.items():
+        field = "adjclose" if col in ADJUSTED_COLS else "close"
         symbols = [sym] + YF_FALLBACK_MAP.get(col, [])
         last_err = None
         for idx, candidate in enumerate(symbols):
             try:
-                out[col] = _yahoo_last_close_on_or_before(candidate, target_date)
+                out[col] = _yahoo_last_close_on_or_before(candidate, target_date, field=field)
                 if idx > 0:
                     print(f"yahoo_fallback_used={col}:{sym}->{candidate}")
                 break
@@ -253,12 +272,13 @@ def fetch_yahoo_bundle_range(start_date: date, end_date: date) -> Dict[str, Dict
     calendar = [start_date + timedelta(days=i) for i in range(span_days)]
     out: Dict[str, Dict[str, float]] = {}
     for col, sym in YF_MAP.items():
+        field = "adjclose" if col in ADJUSTED_COLS else "close"
         symbols = [sym] + YF_FALLBACK_MAP.get(col, [])
         last_err = None
         selected_map: Dict[str, float] | None = None
         for idx, candidate in enumerate(symbols):
             try:
-                series = _yahoo_series(candidate, query_start, end_date)
+                series = _yahoo_series(candidate, query_start, end_date, field=field)
                 series_map = {_ymd(d): v for d, v in series}
                 filled: Dict[str, float] = {}
                 for d in calendar:

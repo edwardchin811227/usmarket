@@ -1,0 +1,17 @@
+{
+  "name": "usmarket 8-factor dashboard",
+  "install": "python3 --version && test -f data/8-factors.csv",
+  "terminals": [
+    {
+      "name": "dashboard",
+      "command": "python3 -m http.server 8000",
+      "description": "Serves the static 8-factor dashboard (index.html + data/8-factors.csv) at http://localhost:8000/index.html. The page fetches ./data/8-factors.csv, so it must be viewed over HTTP rather than opened as a file."
+    }
+  ],
+  "ports": [
+    {
+      "name": "dashboard",
+      "port": 8000
+    }
+  ]
+}
